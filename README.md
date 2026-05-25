@@ -6,6 +6,14 @@ The app talks to the web chat through `https://www.corecosmetic.de/chat/api.php`
 Registration remains in the browser; the app login stores an encrypted app token
 in Android Keystore-backed storage and supports multiple saved accounts.
 
+# Installation
+- Download the .zip or .apk file.
+- Unpack the .zip file and tap the .apk file to start the installation.
+- Google Play Protect may warn you.
+- Find the Install anyway option and tap it.
+
+You can trust our app because the entire source code is publicly available here.
+
 ## Features
 
 - Chat is the main screen.
