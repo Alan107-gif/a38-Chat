@@ -16,12 +16,16 @@ You can trust our app because the entire source code is publicly available here.
 
 ## Features
 
-- Chat is the main screen.
-- Side menu contains account switching, additional account login, contacts, blog,
-  security info and theme selection.
-- Themes: Light, Dark and Neon Moni. Light is the default.
-- Text and compressed WebP image sending.
-- Contacts are built from previous conversations.
+- Native Android interface for the Corecosmetic A38 web chat.
+- The chat opens as the main screen, with quick access to recent conversations.
+- Secure app login with encrypted token storage; registration stays on the web.
+- Multi-account support with saved accounts and fast account switching.
+- Contact list built automatically from people you have already messaged.
+- Text messages and compressed WebP image uploads.
+- Image preview in chat plus full-size image view with recipient handoff.
+- Blog and security pages available inside the app without leaving the workflow.
+- Light, Dark and Neon Moni themes; Light is the default.
+- Built-in language options: German, English, French, Russian, Ukrainian and Italian.
 
 ## Build
 
