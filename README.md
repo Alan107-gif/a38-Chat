@@ -1,13 +1,13 @@
 # a38-Chat
 
-Native Android client for the Corecosmetic A38 chat.
+Native Android client for the <a href="https://www.corecosmetic.de/chat/">Corecosmetic A38 chat</a>.
 
 The app talks to the web chat through `https://www.corecosmetic.de/chat/api.php`.
 Registration remains in the browser; the app login stores an encrypted app token
 in Android Keystore-backed storage and supports multiple saved accounts.
 
 # Installation
-- Download the .zip or .apk file.
+- <a href="https://github.com/Alan107-gif/a38-Chat/raw/main/a38-Chat.apk">Download</a> the .zip or .apk file.
 - Unpack the .zip file and tap the .apk file to start the installation.
 - Google Play Protect may warn you.
 - Find the Install anyway option and tap it.
