@@ -2,7 +2,7 @@
 
 Native Android client for the <a href="https://www.corecosmetic.de/chat/">Corecosmetic A38 chat</a>.
 
-The app talks to the web chat through `https://www.corecosmetic.de/chat/api.php`.
+The app talks to the web chat.
 Registration remains in the browser; the app login stores an encrypted app token
 in Android Keystore-backed storage and supports multiple saved accounts.
 
@@ -16,6 +16,7 @@ You can trust our app because the entire source code is publicly available here.
 
 ## Features
 
+- No AD!
 - Open the app and land directly in your chat, without a crowded web layout.
 - Stay signed in, so you can write again without logging in every time.
 - Use more than one account and switch between them from the side menu.
