@@ -26,8 +26,7 @@ You can trust our app because the entire source code is publicly available here.
 - Choose the look that fits you: Light, Dark or Neon Moni.
 - Read the chat blog and security info directly inside the app.
 - Use the app in German, English, French, Russian, Ukrainian or Italian.
-- Keep full transparency: the source code is public, and the APK is available here.
-
+- 
 ## Build
 
 The repository contains the current installable APK and ZIP:
@@ -35,16 +34,6 @@ The repository contains the current installable APK and ZIP:
 ```text
 a38-Chat.apk
 a38-Chat.zip
-```
-
-Local release build environment:
-
-```bash
-export JAVA_HOME=/home/oem/.local/jdk/temurin-21
-export ANDROID_HOME=/home/oem/Android/Sdk
-export ANDROID_SDK_ROOT=/home/oem/Android/Sdk
-export PATH=$JAVA_HOME/bin:/home/oem/.local/gradle/gradle-8.10.2/bin:$ANDROID_HOME/platform-tools:$PATH
-gradle assembleRelease
 ```
 
 The release APK is copied from `app/build/outputs/apk/release/app-release.apk`
