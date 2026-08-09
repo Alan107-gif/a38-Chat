@@ -1,6 +1,6 @@
 {
-  "versionCode": 3,
-  "versionName": "1.0.1",
+  "versionCode": 4,
+  "versionName": "1.0.2",
   "title": {
     "de": "Update verfügbar",
     "en": "Update available",
@@ -10,14 +10,14 @@
     "it": "Aggiornamento disponibile"
   },
   "notes": {
-    "de": "Chat-Benachrichtigungen mit Löschzeit, korrektes Scrollen am Chatende und ein vollständig sichtbares App-Icon.",
-    "en": "Chat notifications with a removal time, correct scrolling at the end of a chat, and a fully visible app icon.",
-    "fr": "Notifications avec délai de suppression, défilement correct en fin de discussion et icône entièrement visible.",
-    "ru": "Уведомления со временем удаления, правильная прокрутка в конце чата и полностью видимый значок приложения.",
-    "uk": "Сповіщення з часом видалення, правильне прокручування в кінці чату та повністю видима іконка застосунку.",
-    "it": "Notifiche con tempo di rimozione, scorrimento corretto alla fine della chat e icona completamente visibile."
+    "de": "Das App-Icon hat wieder die ausgewogene Größe der frühen Version und besitzt transparente statt schwarze Ecken.",
+    "en": "The app icon once again has the balanced size of the early version, with transparent instead of black corners.",
+    "fr": "L’icône retrouve la taille équilibrée de la première version, avec des coins transparents au lieu de noirs.",
+    "ru": "Значку возвращён удачный размер ранней версии, а чёрные углы заменены прозрачными.",
+    "uk": "Іконці повернуто вдалий розмір ранньої версії, а чорні кути замінено прозорими.",
+    "it": "L’icona torna alle proporzioni equilibrate della prima versione, con angoli trasparenti anziché neri."
   },
   "repoUrl": "https://github.com/Alan107-gif/a38-Chat",
   "apkUrl": "https://raw.githubusercontent.com/Alan107-gif/a38-Chat/main/a38-Chat.apk",
-  "sha256": "964e416a65aa1b1a5d7cb9851c1db553da6c1acfe8c90d96ff9f72b65e477ca4"
+  "sha256": "7a0f4c8e67faadf79797da45bb360a8c1654bde68be421e7227cadbc1d65cf65"
 }
