@@ -1,55 +1,57 @@
-# Terms of Service / Nutzungsbedingungen und Datenschutzgrundsätze
+# Terms of Service and Privacy Principles
 
-**Stand: 9. August 2026**
+**Last updated: August 9, 2026**
 
-Diese Bedingungen gelten für die Android-App a38-Chat und den zugehörigen Webchat unter [corecosmetic.de/chat](https://www.corecosmetic.de/chat/). Betreiber ist der im Impressum von corecosmetic.de genannte Diensteanbieter.
+These terms apply to the a38-Chat Android app and the related web chat at [corecosmetic.de/chat](https://www.corecosmetic.de/chat/). The service operator is the provider named in the legal notice on corecosmetic.de.
 
-## 1. Zweck des Dienstes
+By installing or using the a38-Chat app, you agree to these terms.
 
-a38-Chat ist ein eigenständiger Kommunikationsdienst für den Austausch von Textnachrichten und Bildern. Die Android-App stellt eine kompakte Bedienoberfläche für denselben Chatdienst bereit. Für die Nutzung ist ein Konto erforderlich; die Registrierung erfolgt im Webchat.
+## 1. Purpose of the Service
 
-## 2. Konten und Zugangsdaten
+a38-Chat is an independent communication service for exchanging text messages and images. The Android app provides a compact interface for the same chat service. An account is required to use the service; registration takes place in the web chat.
 
-Nutzer sind für die Geheimhaltung ihrer Zugangsdaten und die Aktivitäten ihres Kontos verantwortlich. Die App speichert nicht das Passwort, sondern einen App-Token. Dieser Token wird auf dem Android-Gerät mit einem Schlüssel aus dem Android Keystore geschützt. Beim Abmelden wird die zugehörige App-Sitzung beendet.
+## 2. Accounts and Access Data
 
-## 3. Speicherung und Verwendung von Daten
+Users are responsible for keeping their access data confidential and for activity under their accounts. The app does not store the password. It stores an app token instead. This token is protected on the Android device with a key from the Android Keystore. Logging out ends the associated app session.
 
-Nachrichten, Bildnachrichten, beteiligte Benutzernamen und notwendige technische Metadaten werden auf dem a38-Chat-Server gespeichert, damit Nachrichten zugestellt und später in der App oder im Webchat angezeigt werden können. Kontodaten und Sitzungsinformationen werden für Anmeldung, Kontoverwaltung und Schutz des Dienstes verarbeitet.
+## 3. Storage and Use of Data
 
-Chat-Inhalte werden nicht verkauft, nicht für Werbung oder Profilbildung verwendet und nicht freiwillig an Dritte weitergegeben oder diesen gezeigt. Sie dienen ausschließlich der Bereitstellung und dem Betrieb des Chats.
+Messages, image messages, the usernames involved, and necessary technical metadata are stored on the a38-Chat server so that messages can be delivered and shown later in the app or web chat. Account data and session information are processed for sign-in, account management, and protection of the service.
 
-Beim Abruf der Update-Informationen stellt die App eine technische Verbindung zu GitHub her. Beim freiwilligen Öffnen verlinkter Webseiten können Verbindungen zu den dort eingesetzten technischen Dienstleistern entstehen. Dabei können übliche Verbindungsdaten wie IP-Adresse, Zeitpunkt und User-Agent anfallen. Chat-Nachrichten und Bilder werden durch diese Funktionen nicht an GitHub oder andere externe Dienste übermittelt.
+Chat content is not sold, used for advertising or profiling, or voluntarily disclosed or shown to third parties. It is used solely to provide and operate the chat service.
 
-## 4. Zugriff durch das Personal
+When checking for updates, the app establishes a technical connection to GitHub. When users voluntarily open linked web pages, connections to the technical service providers used by those pages may occur. Standard connection data, such as IP address, time, and user agent, may be collected in those cases. Chat messages and images are not sent to GitHub or other external services through these functions.
 
-a38-Chat wird von einem sehr kleinen Personenkreis betreut. Es findet keine routinemäßige Einsicht in private Nachrichten statt.
+## 4. Access by Staff
 
-Wenn ein Nutzer den Support kontaktiert, dürfen ausschließlich dazu berechtigte Mitarbeiter die für die Bearbeitung des konkreten Anliegens erforderlichen Nachrichten und Kontodaten einsehen. Mit einer Supportanfrage stimmt der Nutzer diesem begrenzten Zugriff zu. Der Zugriff ist auf das notwendige Maß und den Zweck der Supportbearbeitung beschränkt.
+a38-Chat is maintained by a very small group of people. Private messages are not routinely reviewed.
 
-## 5. Keine Weitergabe an Dritte
+When a user contacts support, only authorised staff may view the messages and account data required to handle that specific request. By submitting a support request, the user consents to this limited access. Access is limited to what is necessary and to the purpose of providing support.
 
-Wir bleiben ein unabhängiger Kommunikationsanbieter. Chat-Inhalte werden weder vermarktet noch freiwillig an Werbenetzwerke, Datenhändler oder andere Dritte weitergegeben. Eine Offenlegung erfolgt nur, wenn wir durch unmittelbar geltendes Recht oder eine wirksame behördliche beziehungsweise gerichtliche Anordnung dazu verpflichtet sind.
+## 5. No Disclosure to Third Parties
 
-## 6. Sicherheit und Transparenz
+We remain an independent communication provider. Chat content is neither marketed nor voluntarily shared with advertising networks, data brokers, or other third parties. Disclosure occurs only where directly applicable law or a valid official or court order requires it.
 
-Wir setzen angemessene technische und organisatorische Schutzmaßnahmen ein. Eine absolute Sicherheit kann bei keinem Onlinedienst garantiert werden. Sicherheitsprobleme sollen dem Support verantwortungsvoll gemeldet und nicht zum Schaden anderer Nutzer ausgenutzt werden.
+## 6. Security and Transparency
 
-Der Android-Quellcode ist öffentlich einsehbar. Dadurch können Interessierte nachvollziehen, welche Verbindungen die App aufbaut und welche Daten sie verarbeitet. Die aktuelle App enthält keine Werbe-, Analyse- oder Tracking-SDKs. Open Source ersetzt keine Sicherheitsprüfung, schafft aber eine überprüfbare Grundlage für unsere Aussagen.
+We use appropriate technical and organisational safeguards. No online service can guarantee absolute security. Security issues should be reported responsibly to support and must not be used to harm other users.
 
-## 7. Position zur Chatkontrolle
+The Android source code is publicly available. This lets interested people inspect the connections the app makes and the data it processes. The current app contains no advertising, analytics, or tracking SDKs. Open source does not replace a security review, but it provides a verifiable basis for these statements.
 
-Wir lehnen anlasslose, flächendeckende Chatkontrolle, clientseitiges Scannen privater Kommunikation und technische Hintertüren entschieden ab. Wir werden solche Maßnahmen nicht freiwillig in a38-Chat einbauen oder akzeptieren.
+## 7. Position on Indiscriminate Chat Control
 
-Zwingendes geltendes Recht kann durch diese Bedingungen nicht ausgeschlossen werden. Sollte eine rechtliche Änderung den unabhängigen und vertraulichen Betrieb des Dienstes unmöglich machen, werden wir darüber transparent informieren und prüfen, ob und in welcher Form a38-Chat weiterbetrieben werden kann.
+We firmly oppose indiscriminate, large-scale chat control, client-side scanning of private communications, and technical backdoors. We will not voluntarily add or accept such measures in a38-Chat.
 
-## 8. Zulässige Nutzung
+Mandatory applicable law cannot be excluded by these terms. If a legal change makes independent and confidential operation of the service impossible, we will communicate this transparently and assess whether and how a38-Chat can continue to operate.
 
-Der Dienst darf nicht für rechtswidrige Inhalte, Belästigung, Identitätsmissbrauch, automatisierten Spam, Angriffe auf den Dienst oder die Verletzung von Rechten anderer genutzt werden. Konten können bei schwerwiegendem Missbrauch eingeschränkt oder gesperrt werden.
+## 8. Acceptable Use
 
-## 9. Verfügbarkeit und Änderungen
+The service must not be used for illegal content, harassment, identity misuse, automated spam, attacks on the service, or violations of other people's rights. Accounts may be restricted or suspended in cases of serious misuse.
 
-Wir bemühen uns um einen verlässlichen Betrieb, garantieren jedoch keine ununterbrochene Verfügbarkeit. Funktionen können aus Sicherheits-, Wartungs- oder technischen Gründen angepasst werden. Wesentliche Änderungen dieser Bedingungen werden transparent im Repository oder im Dienst bekanntgegeben.
+## 9. Availability and Changes
 
-## 10. Kontakt und Datenanfragen
+We aim to operate the service reliably, but cannot guarantee uninterrupted availability. Features may be changed for security, maintenance, or technical reasons. Material changes to these terms will be announced transparently in the repository or service.
 
-Support-, Auskunfts- und Löschanfragen können über die auf corecosmetic.de genannten Kontaktwege gestellt werden. Soweit keine gesetzlichen Aufbewahrungspflichten oder berechtigten Sicherheitsgründe entgegenstehen, werden berechtigte Anfragen entsprechend bearbeitet.
+## 10. Contact and Data Requests
+
+Support, access, and deletion requests can be submitted through the contact channels listed on corecosmetic.de. Where no legal retention requirement or legitimate security reason prevents it, valid requests will be handled accordingly.
