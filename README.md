@@ -1,5 +1,9 @@
 # a38-Chat
 
+<p align="center">
+  <img src="app/src/main/res/drawable-nodpi/app_icon.png" alt="a38-Chat logo" width="180">
+</p>
+
 Native Android client for the [Corecosmetic A38 chat](https://www.corecosmetic.de/chat/).
 
 Registration remains on the website. After signing in, the app stores a protected app token instead of your password and keeps you signed in.
@@ -15,20 +19,18 @@ Version 1.0 uses a dedicated release certificate. An older test APK signed with 
 
 ## Features
 
-- No ads.
-- Open the app and land directly in your chat without the crowded web layout.
-- Stay signed in and start writing without logging in every time.
-- Add multiple accounts and switch between them from the side menu.
-- Find previous chat partners automatically in the contact list.
-- Start at the newest message when opening the app or a chat; automatic scrolling continues only while you remain at the bottom.
-- Receive chat notifications and choose when they disappear automatically.
-- Send text with umlauts, Cyrillic and other Unicode characters.
-- Share compressed images and keep portrait photos correctly oriented.
-- Tap an image to view it large and use its recipient for a new message.
-- Choose between Light, Dark and Neon Moni.
+- Open the app and land directly in your chat, ready to continue where you left off.
+- Stay signed in, add multiple accounts and switch between them from the side menu.
+- Find everyone you have chatted with in a clear contact list.
+- Open a conversation at its newest message without losing your place while reading older messages.
+- Receive notifications for new messages and choose how long they remain visible.
+- Send text and compressed photos, including correctly oriented portrait images.
+- Tap any photo for a large view and reuse its recipient for your next message.
+- Choose between Light, Dark and Neon Moni themes.
 - Use the app in German, English, French, Russian, Ukrainian or Italian.
-- Open the chat blog and security information directly inside the app.
-- Receive a secure in-app notice when a newer GitHub version is available.
+- Open the chat blog and security information without leaving the app experience.
+- Get an in-app notice when a newer GitHub release is available.
+- Enjoy a focused chat without ads, analytics or tracking SDKs.
 
 ## Transparency
 
@@ -40,3 +42,11 @@ The complete Android source code is available in this repository. The downloadab
 a38-Chat.apk
 a38-Chat.zip
 ```
+
+## Small, private and transparent
+
+The current APK is about **3.2 MB** and remains safely below **5 MB**. That is only a fraction of the space used by full-featured messengers such as WhatsApp. a38-Chat is designed to be secure and lightweight by concentrating on the chat itself instead of bundling advertising, analytics or unrelated services.
+
+Your privacy matters to us. Chat messages and images are stored on the a38-Chat server only so they can be delivered and shown again in the app or web chat. They are not sold, used for advertising or shared with third parties. The public source code makes the app's network behavior inspectable and confirms that the current Android client contains no tracking scripts or tracking SDKs.
+
+Details about data handling, limited support access and our position on indiscriminate chat control are documented in the [Terms of Service and Privacy Principles](TERMS.md).
