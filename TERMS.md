@@ -46,7 +46,7 @@ Mandatory applicable law cannot be excluded by these terms. If a legal change ma
 
 ## 8. Acceptable Use
 
-The service must not be used for illegal content, harassment, identity misuse, automated spam, attacks on the service, or violations of other people's rights. Accounts may be restricted or suspended in cases of serious misuse.
+The service must not be used for illegal content, harassment, identity misuse, automated spam, attacks on the service, or violations of other people's rights. Accounts may be restricted or suspended in confirmed cases of serious misuse.
 
 ## 9. Availability and Changes
 
