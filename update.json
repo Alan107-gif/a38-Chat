@@ -1,0 +1,23 @@
+{
+  "versionCode": 2,
+  "versionName": "1.0.0",
+  "title": {
+    "de": "Update verfügbar",
+    "en": "Update available",
+    "fr": "Mise à jour disponible",
+    "ru": "Доступно обновление",
+    "uk": "Доступне оновлення",
+    "it": "Aggiornamento disponibile"
+  },
+  "notes": {
+    "de": "Eine neue geprüfte Version von a38-Chat ist verfügbar.",
+    "en": "A new verified version of a38-Chat is available.",
+    "fr": "Une nouvelle version vérifiée de a38-Chat est disponible.",
+    "ru": "Доступна новая проверенная версия a38-Chat.",
+    "uk": "Доступна нова перевірена версія a38-Chat.",
+    "it": "È disponibile una nuova versione verificata di a38-Chat."
+  },
+  "repoUrl": "https://github.com/Alan107-gif/a38-Chat",
+  "apkUrl": "https://raw.githubusercontent.com/Alan107-gif/a38-Chat/main/a38-Chat.apk",
+  "sha256": "96daada7b803968a3bc3949cff233e881a3524c853a1c8a8157452c61e468556"
+}

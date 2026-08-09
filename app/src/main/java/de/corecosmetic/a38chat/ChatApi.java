@@ -176,7 +176,7 @@ final class ChatApi {
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(20000);
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "A38ChatAndroid/0.1");
+        connection.setRequestProperty("User-Agent", "a38-Chat/1.0.0");
         if (token != null && !token.isEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -187,8 +187,12 @@ final class ChatApi {
         return encode(key) + "=" + encode(value == null ? "" : value);
     }
 
-    private static String encode(String value) {
-        return URLEncoder.encode(value, StandardCharsets.UTF_8);
+    static String encode(String value) {
+        try {
+            return URLEncoder.encode(value, StandardCharsets.UTF_8.name());
+        } catch (IOException impossible) {
+            throw new IllegalStateException("UTF-8 is not available", impossible);
+        }
     }
 
     private static String readAll(InputStream input) throws IOException {

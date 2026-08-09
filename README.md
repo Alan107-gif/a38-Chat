@@ -1,40 +1,41 @@
 # a38-Chat
 
-Native Android client for the <a href="https://www.corecosmetic.de/chat/">Corecosmetic A38 chat</a>.
+Native Android client for the [Corecosmetic A38 chat](https://www.corecosmetic.de/chat/).
 
-The app talks to the web chat.
-Registration remains in the browser; the app login stores an encrypted app token
-in Android Keystore-backed storage and supports multiple saved accounts.
+Registration remains on the website. After signing in, the app stores a protected app token instead of your password and keeps you signed in.
 
-# Installation
-- <a href="https://github.com/Alan107-gif/a38-Chat/raw/main/a38-Chat.apk">Download</a> the .zip or .apk file.
-- Unpack the .zip file and tap the .apk file to start the installation.
-- Google Play Protect may warn you.
-- Find the Install anyway option and tap it.
+## Installation
 
-You can trust our app because the entire source code is publicly available here.
+- [Download the APK](https://github.com/Alan107-gif/a38-Chat/raw/main/a38-Chat.apk)
+- [Download the ZIP](https://github.com/Alan107-gif/a38-Chat/raw/main/a38-Chat.zip)
+- Open the APK on your Android device and confirm the installation.
+- Android may ask you to allow installations from the app used to open the file.
+
+Version 1.0 uses a dedicated release certificate. An older test APK signed with the Android debug certificate must be uninstalled once before installing version 1.0.
 
 ## Features
 
-- No AD!
-- Open the app and land directly in your chat, without a crowded web layout.
-- Stay signed in, so you can write again without logging in every time.
-- Use more than one account and switch between them from the side menu.
-- Find past chat partners automatically in your contact list.
-- Send quick text messages or share compressed images without leaving the app.
-- Tap an image to view it large, then take over the recipient with one button.
-- Choose the look that fits you: Light, Dark or Neon Moni.
-- Read the chat blog and security info directly inside the app.
+- No ads.
+- Open the app and land directly in your chat without the crowded web layout.
+- Stay signed in and start writing without logging in every time.
+- Add multiple accounts and switch between them from the side menu.
+- Find previous chat partners automatically in the contact list.
+- Scroll through older messages without being forced back to the newest message.
+- Send text with umlauts, Cyrillic and other Unicode characters.
+- Share compressed images and keep portrait photos correctly oriented.
+- Tap an image to view it large and use its recipient for a new message.
+- Choose between Light, Dark and Neon Moni.
 - Use the app in German, English, French, Russian, Ukrainian or Italian.
-- 
-## Build
+- Open the chat blog and security information directly inside the app.
+- Receive a secure in-app notice when a newer GitHub version is available.
 
-The repository contains the current installable APK and ZIP:
+## Transparency
+
+The complete Android source code is available in this repository. The downloadable APK is built from this source and its SHA-256 checksum is published in [`SHA256SUMS`](SHA256SUMS).
+
+## Downloads
 
 ```text
 a38-Chat.apk
 a38-Chat.zip
 ```
-
-The release APK is copied from `app/build/outputs/apk/release/app-release.apk`
-to `a38-Chat.apk`.

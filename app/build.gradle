@@ -2,6 +2,13 @@ plugins {
     id "com.android.application"
 }
 
+def signingPropertiesFile = file(System.getenv("A38_CHAT_SIGNING_PROPERTIES")
+        ?: "${System.getProperty('user.home')}/.config/a38-chat/signing.properties")
+def signingProperties = new Properties()
+if (signingPropertiesFile.isFile()) {
+    signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+
 android {
     namespace "de.corecosmetic.a38chat"
     compileSdk 35
@@ -10,15 +17,39 @@ android {
         applicationId "de.corecosmetic.a38chat"
         minSdk 26
         targetSdk 35
-        versionCode 1
-        versionName "0.1.0"
+        versionCode 2
+        versionName "1.0.0"
+    }
+
+    signingConfigs {
+        release {
+            if (signingPropertiesFile.isFile()) {
+                storeFile file(signingProperties.getProperty("storeFile"))
+                storePassword signingProperties.getProperty("storePassword")
+                keyAlias signingProperties.getProperty("keyAlias")
+                keyPassword signingProperties.getProperty("keyPassword")
+            }
+        }
     }
 
     buildTypes {
         release {
             minifyEnabled false
             shrinkResources false
-            signingConfig signingConfigs.debug
+            if (signingPropertiesFile.isFile()) {
+                signingConfig signingConfigs.release
+            }
         }
     }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_11
+        targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+dependencies {
+    implementation "androidx.exifinterface:exifinterface:1.4.2"
+    compileOnly "androidx.annotation:annotation:1.8.1"
+    testImplementation "junit:junit:4.13.2"
 }

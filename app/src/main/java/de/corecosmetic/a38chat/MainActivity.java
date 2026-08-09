@@ -1,7 +1,9 @@
 package de.corecosmetic.a38chat;
 
+import android.Manifest;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Color;
@@ -13,13 +15,17 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
+import android.provider.Settings;
+import android.text.TextUtils;
 import android.text.InputType;
+import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
 import android.view.ViewGroup;
 import android.view.Window;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.inputmethod.EditorInfo;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.FrameLayout;
@@ -29,25 +35,40 @@ import android.widget.ScrollView;
 import android.widget.TextView;
 import android.widget.Toast;
 
+import androidx.exifinterface.media.ExifInterface;
+
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
-import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
     private static final int REQ_IMAGE = 7001;
+    private static final int REQ_INSTALL_PERMISSION = 7002;
     private static final int IMAGE_LIMIT_BYTES = 120 * 1024;
     private static final int IMAGE_MAX_SIDE = 1024;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
+    private final ExecutorService imageExecutor = Executors.newFixedThreadPool(2);
+    private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
     private final List<ChatApi.Message> visibleMessages = new ArrayList<>();
-    private final Map<Integer, Bitmap> imageCache = new HashMap<>();
+    private final Set<Integer> visibleMessageIds = new HashSet<>();
+    private final Set<Integer> loadingImageIds = new HashSet<>();
+    private final Map<Integer, List<ImageView>> pendingImageViews = new HashMap<>();
+    private final LruCache<Integer, Bitmap> imageCache = new LruCache<Integer, Bitmap>(24 * 1024) {
+        @Override
+        protected int sizeOf(Integer key, Bitmap bitmap) {
+            return Math.max(1, bitmap.getByteCount() / 1024);
+        }
+    };
 
     private AccountStore accountStore;
     private AccountStore.Account currentAccount;
@@ -64,17 +85,29 @@ public class MainActivity extends Activity {
     private TextView imageStatusView;
     private FrameLayout menuOverlay;
     private FrameLayout imageOverlay;
+    private FrameLayout updateOverlay;
     private Uri selectedImageUri;
+    private File pendingUpdateFile;
     private String selectedPeer = "";
+    private String draftRecipient = "";
+    private String draftMessage = "";
     private int lastMessageId = 0;
+    private int conversationGeneration = 0;
     private boolean loadingMessages = false;
+    private boolean messageReloadPending = false;
+    private boolean pendingMessageErrors = false;
+    private boolean loadingContacts = false;
+    private boolean contactsReloadPending = false;
+    private boolean pendingContactErrors = false;
     private boolean chatVisible = false;
+    private boolean activityStarted = false;
+    private boolean updateChecked = false;
     private List<ChatApi.Contact> contacts = new ArrayList<>();
 
     private final Runnable pollRunnable = new Runnable() {
         @Override
         public void run() {
-            if (chatVisible && currentAccount != null) {
+            if (activityStarted && chatVisible && currentAccount != null) {
                 loadMessages(false, false);
                 loadContacts(false);
                 mainHandler.postDelayed(this, 4000);
@@ -95,8 +128,42 @@ public class MainActivity extends Activity {
         if (currentAccount == null) {
             showLogin(false);
         } else {
-            showChat(true);
+            if (savedInstanceState != null) {
+                selectedPeer = savedInstanceState.getString("selected_peer", "");
+                draftRecipient = savedInstanceState.getString("draft_recipient", selectedPeer);
+                draftMessage = savedInstanceState.getString("draft_message", "");
+                String imageUri = savedInstanceState.getString("selected_image", "");
+                selectedImageUri = imageUri.isEmpty() ? null : Uri.parse(imageUri);
+                showChat(false);
+            } else {
+                showChat(true);
+            }
         }
+    }
+
+    @Override
+    protected void onStart() {
+        super.onStart();
+        activityStarted = true;
+        schedulePolling();
+        checkForUpdatesOnce();
+    }
+
+    @Override
+    protected void onStop() {
+        activityStarted = false;
+        mainHandler.removeCallbacks(pollRunnable);
+        super.onStop();
+    }
+
+    @Override
+    protected void onSaveInstanceState(Bundle outState) {
+        captureComposerState();
+        outState.putString("selected_peer", selectedPeer);
+        outState.putString("draft_recipient", draftRecipient);
+        outState.putString("draft_message", draftMessage);
+        outState.putString("selected_image", selectedImageUri == null ? "" : selectedImageUri.toString());
+        super.onSaveInstanceState(outState);
     }
 
     @Override
@@ -104,11 +171,20 @@ public class MainActivity extends Activity {
         chatVisible = false;
         mainHandler.removeCallbacks(pollRunnable);
         executor.shutdownNow();
+        imageExecutor.shutdownNow();
+        updateExecutor.shutdownNow();
+        imageCache.evictAll();
+        loadingImageIds.clear();
+        pendingImageViews.clear();
         super.onDestroy();
     }
 
     @Override
     public void onBackPressed() {
+        if (updateOverlay != null) {
+            closeUpdateDialog();
+            return;
+        }
         if (imageOverlay != null) {
             closeImageViewer();
             return;
@@ -123,6 +199,12 @@ public class MainActivity extends Activity {
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+        if (requestCode == REQ_INSTALL_PERMISSION) {
+            if (pendingUpdateFile != null && getPackageManager().canRequestPackageInstalls()) {
+                launchPackageInstaller(pendingUpdateFile);
+            }
+            return;
+        }
         if (requestCode == REQ_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
             selectedImageUri = data.getData();
             try {
@@ -139,9 +221,9 @@ public class MainActivity extends Activity {
     }
 
     private void showLogin(boolean canBack) {
+        captureComposerState();
         chatVisible = false;
         mainHandler.removeCallbacks(pollRunnable);
-        selectedImageUri = null;
         copy = AppText.from(accountStore.getLanguage());
 
         rootFrame = new FrameLayout(this);
@@ -185,11 +267,17 @@ public class MainActivity extends Activity {
         ));
 
         EditText username = input(copy.username);
+        username.setSingleLine(true);
+        username.setAutofillHints(View.AUTOFILL_HINT_USERNAME);
+        username.setImeOptions(EditorInfo.IME_ACTION_NEXT);
         panel.addView(label(copy.username));
         panel.addView(username, matchWrap());
 
         EditText password = input(copy.password);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
+        password.setSingleLine(true);
+        password.setAutofillHints(View.AUTOFILL_HINT_PASSWORD);
+        password.setImeOptions(EditorInfo.IME_ACTION_DONE);
         panel.addView(label(copy.password));
         panel.addView(password, matchWrap());
 
@@ -203,6 +291,13 @@ public class MainActivity extends Activity {
             }
             login.setEnabled(false);
             doLogin(user, pass, login);
+        });
+        password.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_DONE) {
+                login.performClick();
+                return true;
+            }
+            return false;
         });
         panel.addView(login, topMargin(matchWrap(), dp(14)));
 
@@ -233,12 +328,15 @@ public class MainActivity extends Activity {
                 },
                 error -> {
                     button.setEnabled(true);
-                    toast(error);
+                    toast(errorMessage(error));
                 }
         );
     }
 
     private void showChat(boolean resetPeer) {
+        if (!resetPeer) {
+            captureComposerState();
+        }
         chatVisible = false;
         mainHandler.removeCallbacks(pollRunnable);
         currentAccount = accountStore.getActiveAccount();
@@ -248,11 +346,16 @@ public class MainActivity extends Activity {
         }
         if (resetPeer) {
             selectedPeer = "";
+            draftRecipient = "";
+            draftMessage = "";
+            selectedImageUri = null;
         }
         lastMessageId = 0;
         visibleMessages.clear();
-        imageCache.clear();
-        selectedImageUri = null;
+        visibleMessageIds.clear();
+        if (resetPeer) {
+            imageCache.evictAll();
+        }
         palette = Palette.from(accountStore.getTheme());
         copy = AppText.from(accountStore.getLanguage());
         applySystemBars();
@@ -298,7 +401,7 @@ public class MainActivity extends Activity {
         chatVisible = true;
         loadContacts(true);
         loadMessages(true, true);
-        mainHandler.postDelayed(pollRunnable, 4000);
+        schedulePolling();
     }
 
     private LinearLayout buildTopBar() {
@@ -310,25 +413,31 @@ public class MainActivity extends Activity {
 
         Button menu = iconButton("\u22EE");
         menu.setTextSize(22);
+        menu.setContentDescription(copy.menuDescription());
         menu.setOnClickListener(view -> openMenu());
-        bar.addView(menu, new LinearLayout.LayoutParams(dp(46), dp(42)));
+        bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         LinearLayout titleBlock = new LinearLayout(this);
         titleBlock.setOrientation(LinearLayout.VERTICAL);
         titleBlock.setPadding(dp(10), 0, dp(8), 0);
         titleView = text("", 18, palette.text, Typeface.BOLD);
         subtitleView = text("", 12, palette.muted, Typeface.NORMAL);
+        titleView.setSingleLine(true);
+        titleView.setEllipsize(TextUtils.TruncateAt.END);
+        subtitleView.setSingleLine(true);
+        subtitleView.setEllipsize(TextUtils.TruncateAt.END);
         titleBlock.addView(titleView, matchWrap());
         titleBlock.addView(subtitleView, matchWrap());
         bar.addView(titleBlock, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
         Button refresh = iconButton("\u21BB");
         refresh.setTextSize(21);
+        refresh.setContentDescription(copy.reloadDescription());
         refresh.setOnClickListener(view -> {
             loadContacts(true);
             loadMessages(true, true);
         });
-        bar.addView(refresh, new LinearLayout.LayoutParams(dp(46), dp(42)));
+        bar.addView(refresh, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         return bar;
     }
@@ -337,16 +446,18 @@ public class MainActivity extends Activity {
         LinearLayout panel = new LinearLayout(this);
         panel.setOrientation(LinearLayout.VERTICAL);
         panel.setPadding(dp(12), dp(10), dp(12), dp(12));
-        panel.setBackground(round(withAlpha(palette.surface, 174), dp(22)));
+        panel.setBackground(round(withAlpha(palette.surface, 150), dp(22)));
 
         recipientInput = input(copy.recipient);
         recipientInput.setSingleLine(true);
+        recipientInput.setImeOptions(EditorInfo.IME_ACTION_NEXT);
         panel.addView(recipientInput, matchWrap());
 
         messageInput = input(copy.message);
         messageInput.setMinLines(2);
         messageInput.setMaxLines(4);
         messageInput.setGravity(Gravity.TOP | Gravity.START);
+        messageInput.setImeOptions(EditorInfo.IME_ACTION_SEND);
         panel.addView(messageInput, topMargin(matchWrap(), dp(8)));
 
         LinearLayout actions = new LinearLayout(this);
@@ -357,7 +468,7 @@ public class MainActivity extends Activity {
 
         Button attach = ghostButton(copy.image);
         attach.setOnClickListener(view -> chooseImage());
-        actions.addView(attach, new LinearLayout.LayoutParams(dp(86), dp(44)));
+        actions.addView(attach, new LinearLayout.LayoutParams(dp(104), dp(48)));
 
         imageStatusView = text(copy.optional, 12, palette.muted, Typeface.NORMAL);
         imageStatusView.setPadding(dp(8), 0, dp(8), 0);
@@ -365,10 +476,19 @@ public class MainActivity extends Activity {
 
         Button send = primaryButton(copy.send);
         send.setOnClickListener(view -> sendMessage(send));
-        actions.addView(send, new LinearLayout.LayoutParams(dp(110), dp(44)));
+        messageInput.setOnEditorActionListener((view, actionId, event) -> {
+            if (actionId == EditorInfo.IME_ACTION_SEND) {
+                send.performClick();
+                return true;
+            }
+            return false;
+        });
+        actions.addView(send, new LinearLayout.LayoutParams(dp(112), dp(48)));
 
-        if (!selectedPeer.isEmpty()) {
-            recipientInput.setText(selectedPeer);
+        recipientInput.setText(draftRecipient.isEmpty() ? selectedPeer : draftRecipient);
+        messageInput.setText(draftMessage);
+        if (selectedImageUri != null) {
+            imageStatusView.setText(copy.imageSelected);
         }
 
         return panel;
@@ -409,6 +529,7 @@ public class MainActivity extends Activity {
                 id -> {
                     sendButton.setEnabled(true);
                     messageInput.setText("");
+                    draftMessage = "";
                     selectedImageUri = null;
                     if (imageStatusView != null) {
                         imageStatusView.setText(copy.optional);
@@ -426,48 +547,75 @@ public class MainActivity extends Activity {
                     if (imageStatusView != null) {
                         imageStatusView.setText(selectedImageUri == null ? copy.optional : copy.imageSelected);
                     }
-                    toast(error);
+                    if (isUnauthorized(error) && accountMatches(account)) {
+                        handleExpiredSession(account);
+                    } else {
+                        toast(errorMessage(error));
+                    }
                 }
         );
     }
 
     private void loadMessages(boolean reset, boolean showErrors) {
-        if (loadingMessages || currentAccount == null) {
+        if (currentAccount == null) {
             return;
         }
+
+        if (reset) {
+            conversationGeneration++;
+            visibleMessages.clear();
+            visibleMessageIds.clear();
+            lastMessageId = 0;
+            renderMessages();
+        }
+
+        if (loadingMessages) {
+            if (reset) {
+                messageReloadPending = true;
+                pendingMessageErrors = pendingMessageErrors || showErrors;
+            }
+            return;
+        }
+
         loadingMessages = true;
         int since = reset ? 0 : lastMessageId;
         String peer = selectedPeer;
         AccountStore.Account account = currentAccount;
-
-        if (reset && messagesBox != null) {
-            visibleMessages.clear();
-            lastMessageId = 0;
-            renderMessages();
-        }
+        int generation = conversationGeneration;
 
         runTask(
                 () -> ChatApi.messages(account.token, since, peer),
                 result -> {
                     loadingMessages = false;
-                    if (currentAccount == null || !account.username.equals(currentAccount.username)) {
-                        return;
+                    if (chatVisible
+                            && accountMatches(account)
+                            && generation == conversationGeneration
+                            && peer.equals(selectedPeer)) {
+                        if (reset) {
+                            visibleMessages.clear();
+                            visibleMessageIds.clear();
+                            addVisibleMessages(result.messages);
+                            renderMessages();
+                        } else {
+                            List<ChatApi.Message> additions = addVisibleMessages(result.messages);
+                            appendMessageRows(additions);
+                        }
+                        lastMessageId = Math.max(lastMessageId, result.lastId);
                     }
-                    if (reset) {
-                        visibleMessages.clear();
-                    }
-                    visibleMessages.addAll(result.messages);
-                    lastMessageId = result.lastId;
-                    renderMessages();
+                    runPendingMessageReload();
                 },
                 error -> {
                     loadingMessages = false;
-                    if (showErrors) {
-                        toast(error);
+                    boolean requestIsCurrent = chatVisible
+                            && accountMatches(account)
+                            && generation == conversationGeneration
+                            && peer.equals(selectedPeer);
+                    if (requestIsCurrent && isUnauthorized(error)) {
+                        handleExpiredSession(account);
+                    } else if (requestIsCurrent && showErrors) {
+                        toast(errorMessage(error));
                     }
-                    if (error.toLowerCase(Locale.ROOT).contains("nicht angemeldet")) {
-                        showLogin(true);
-                    }
+                    runPendingMessageReload();
                 }
         );
     }
@@ -476,20 +624,48 @@ public class MainActivity extends Activity {
         if (currentAccount == null) {
             return;
         }
+        if (loadingContacts) {
+            contactsReloadPending = true;
+            pendingContactErrors = pendingContactErrors || showErrors;
+            return;
+        }
+        loadingContacts = true;
         AccountStore.Account account = currentAccount;
         runTask(
                 () -> ChatApi.contacts(account.token),
                 result -> {
-                    if (currentAccount != null && account.username.equals(currentAccount.username)) {
+                    loadingContacts = false;
+                    if (chatVisible && accountMatches(account)) {
                         contacts = result;
                     }
+                    runPendingContactReload();
                 },
                 error -> {
-                    if (showErrors) {
-                        toast(error);
+                    loadingContacts = false;
+                    if (chatVisible && accountMatches(account) && isUnauthorized(error)) {
+                        handleExpiredSession(account);
+                    } else if (chatVisible && accountMatches(account) && showErrors) {
+                        toast(errorMessage(error));
                     }
+                    runPendingContactReload();
                 }
         );
+    }
+
+    private List<ChatApi.Message> addVisibleMessages(List<ChatApi.Message> messages) {
+        return MessageMerge.appendUnique(visibleMessages, visibleMessageIds, messages);
+    }
+
+    private void appendMessageRows(List<ChatApi.Message> messages) {
+        if (messagesBox == null || messages.isEmpty()) {
+            return;
+        }
+        if (emptyView != null && emptyView.getParent() == messagesBox) {
+            messagesBox.removeView(emptyView);
+        }
+        for (ChatApi.Message message : messages) {
+            messagesBox.addView(messageRow(message), matchWrap());
+        }
     }
 
     private void renderMessages() {
@@ -540,7 +716,7 @@ public class MainActivity extends Activity {
         if (message.isImage()) {
             ImageView image = new ImageView(this);
             image.setAdjustViewBounds(true);
-            image.setScaleType(ImageView.ScaleType.CENTER_CROP);
+            image.setScaleType(ImageView.ScaleType.FIT_CENTER);
             image.setMaxWidth(dp(280));
             image.setMaxHeight(dp(280));
             Bitmap cached = imageCache.get(message.id);
@@ -551,10 +727,16 @@ public class MainActivity extends Activity {
                 loadImage(message.id, image);
             }
             image.setOnClickListener(view -> showImageViewer(message, peer));
-            bubble.addView(image, new LinearLayout.LayoutParams(dp(260), dp(190)));
+            int imageHeight = 190;
+            if (message.imageWidth > 0 && message.imageHeight > 0) {
+                imageHeight = Math.round(260f * message.imageHeight / message.imageWidth);
+                imageHeight = Math.max(120, Math.min(280, imageHeight));
+            }
+            bubble.addView(image, new LinearLayout.LayoutParams(dp(260), dp(imageHeight)));
             if (!message.text.isEmpty()) {
                 TextView caption = text(message.text, 15, outgoing ? Color.WHITE : palette.text, Typeface.NORMAL);
                 caption.setPadding(0, dp(8), 0, 0);
+                caption.setTextIsSelectable(true);
                 bubble.addView(caption, new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -563,6 +745,7 @@ public class MainActivity extends Activity {
         } else {
             TextView body = text(message.text, 16, outgoing ? Color.WHITE : palette.text, Typeface.NORMAL);
             body.setMaxWidth(dp(292));
+            body.setTextIsSelectable(true);
             bubble.addView(body);
         }
 
@@ -580,17 +763,57 @@ public class MainActivity extends Activity {
         if (account == null) {
             return;
         }
-        runTask(
-                () -> ChatApi.image(account.token, id),
-                bitmap -> {
-                    if (bitmap != null) {
-                        imageCache.put(id, bitmap);
-                        imageView.setImageBitmap(bitmap);
+        Bitmap cached = imageCache.get(id);
+        if (cached != null) {
+            deliverImage(imageView, cached);
+            return;
+        }
+
+        List<ImageView> waiting = pendingImageViews.get(id);
+        if (waiting == null) {
+            waiting = new ArrayList<>();
+            pendingImageViews.put(id, waiting);
+        }
+        waiting.add(imageView);
+        if (!loadingImageIds.add(id)) {
+            return;
+        }
+
+        imageExecutor.execute(() -> {
+            Bitmap bitmap = null;
+            try {
+                bitmap = ChatApi.image(account.token, id);
+            } catch (Exception ignored) {
+            }
+            Bitmap result = bitmap;
+            mainHandler.post(() -> {
+                loadingImageIds.remove(id);
+                List<ImageView> targets = pendingImageViews.remove(id);
+                if (result != null) {
+                    imageCache.put(id, result);
+                    if (targets != null) {
+                        for (ImageView target : targets) {
+                            deliverImage(target, result);
+                        }
                     }
-                },
-                error -> {
+                } else if (targets != null) {
+                    for (ImageView target : targets) {
+                        Object status = target.getTag();
+                        if (status instanceof TextView) {
+                            ((TextView) status).setText(copy.imageLoadFailed);
+                        }
+                    }
                 }
-        );
+            });
+        });
+    }
+
+    private void deliverImage(ImageView imageView, Bitmap bitmap) {
+        imageView.setImageBitmap(bitmap);
+        Object status = imageView.getTag();
+        if (status instanceof View) {
+            ((View) status).setVisibility(View.GONE);
+        }
     }
 
     private void showImageViewer(ChatApi.Message message, String peer) {
@@ -631,9 +854,10 @@ public class MainActivity extends Activity {
         Button close = iconButton("×");
         close.setTextColor(Color.WHITE);
         close.setTextSize(24);
+        close.setContentDescription(copy.closeDescription());
         close.setBackground(strokeRound(Color.argb(92, 255, 255, 255), Color.argb(150, 255, 255, 255), dp(999)));
         close.setOnClickListener(view -> closeImageViewer());
-        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(46), dp(42));
+        FrameLayout.LayoutParams closeParams = new FrameLayout.LayoutParams(dp(48), dp(48));
         closeParams.gravity = Gravity.TOP | Gravity.END;
         closeParams.setMargins(0, dp(8), dp(10), 0);
         imageOverlay.addView(close, closeParams);
@@ -651,44 +875,18 @@ public class MainActivity extends Activity {
         });
         FrameLayout.LayoutParams takeParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.WRAP_CONTENT,
-                dp(42)
+                dp(48)
         );
         takeParams.gravity = Gravity.BOTTOM | Gravity.END;
         takeParams.setMargins(dp(10), 0, dp(10), dp(18));
         imageOverlay.addView(takeRecipient, takeParams);
 
-        Bitmap cached = imageCache.get(message.id);
-        if (cached != null) {
-            loading.setVisibility(View.GONE);
-            image.setImageBitmap(cached);
-            return;
-        }
-
-        AccountStore.Account account = currentAccount;
-        if (account == null) {
+        if (currentAccount == null) {
             loading.setText(copy.imageLoadFailed);
             return;
         }
-        runTask(
-                () -> ChatApi.image(account.token, message.id),
-                bitmap -> {
-                    if (imageOverlay == null) {
-                        return;
-                    }
-                    if (bitmap != null) {
-                        imageCache.put(message.id, bitmap);
-                        loading.setVisibility(View.GONE);
-                        image.setImageBitmap(bitmap);
-                    } else {
-                        loading.setText(copy.imageLoadFailed);
-                    }
-                },
-                error -> {
-                    if (imageOverlay != null) {
-                        loading.setText(copy.imageLoadFailed);
-                    }
-                }
-        );
+        image.setTag(loading);
+        loadImage(message.id, image);
     }
 
     private void closeImageViewer() {
@@ -740,9 +938,10 @@ public class MainActivity extends Activity {
         TextView title = text("a38-Chat", 22, palette.text, Typeface.BOLD);
         header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        Button close = iconButton("X");
+        Button close = iconButton("×");
+        close.setContentDescription(copy.closeDescription());
         close.setOnClickListener(view -> closeMenu());
-        header.addView(close, new LinearLayout.LayoutParams(dp(42), dp(38)));
+        header.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         TextView active = text(currentAccount == null ? copy.noAccount : copy.activeAccount(currentAccount.username), 13, palette.muted, Typeface.NORMAL);
         active.setPadding(0, dp(4), 0, dp(14));
@@ -782,11 +981,14 @@ public class MainActivity extends Activity {
         panel.addView(languagesTop, matchWrap());
         addLanguageButton(languagesTop, "Deutsch", "de");
         addLanguageButton(languagesTop, "English", "en");
-        addLanguageButton(languagesTop, "Français", "fr");
+        LinearLayout languagesMiddle = new LinearLayout(this);
+        languagesMiddle.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(languagesMiddle, topMargin(matchWrap(), dp(6)));
+        addLanguageButton(languagesMiddle, "Français", "fr");
+        addLanguageButton(languagesMiddle, "Русский", "ru");
         LinearLayout languagesBottom = new LinearLayout(this);
         languagesBottom.setOrientation(LinearLayout.HORIZONTAL);
         panel.addView(languagesBottom, topMargin(matchWrap(), dp(6)));
-        addLanguageButton(languagesBottom, "Русский", "ru");
         addLanguageButton(languagesBottom, "Українська", "uk");
         addLanguageButton(languagesBottom, "Italiano", "it");
 
@@ -830,7 +1032,7 @@ public class MainActivity extends Activity {
             closeMenu();
             showChat(false);
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1);
         params.rightMargin = dp(6);
         parent.addView(button, params);
     }
@@ -844,7 +1046,7 @@ public class MainActivity extends Activity {
             closeMenu();
             showChat(false);
         });
-        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(36), 1);
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1);
         params.rightMargin = dp(5);
         parent.addView(button, params);
     }
@@ -856,6 +1058,8 @@ public class MainActivity extends Activity {
 
         TextView switchButton = menuItem(account.username, account.username.equals(accountStore.getActiveUsername()));
         switchButton.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
+        switchButton.setSingleLine(true);
+        switchButton.setEllipsize(TextUtils.TruncateAt.END);
         switchButton.setOnClickListener(view -> {
             accountStore.setActiveUsername(account.username);
             currentAccount = account;
@@ -863,12 +1067,12 @@ public class MainActivity extends Activity {
             closeMenu();
             showChat(true);
         });
-        row.addView(switchButton, new LinearLayout.LayoutParams(0, dp(42), 1));
+        row.addView(switchButton, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         TextView remove = menuChip(copy.logout, false);
         remove.setTextSize(12);
         remove.setOnClickListener(view -> logoutAndRemove(account));
-        LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(78), dp(42));
+        LinearLayout.LayoutParams removeParams = new LinearLayout.LayoutParams(dp(92), dp(48));
         removeParams.leftMargin = dp(8);
         row.addView(remove, removeParams);
         return row;
@@ -933,7 +1137,171 @@ public class MainActivity extends Activity {
         startActivity(intent);
     }
 
+    private void checkForUpdatesOnce() {
+        if (updateChecked || !activityStarted) {
+            return;
+        }
+        updateChecked = true;
+        updateExecutor.execute(() -> {
+            try {
+                AppUpdateManager.UpdateInfo info = AppUpdateManager.check(this);
+                mainHandler.post(() -> {
+                    if (activityStarted && info.versionCode > AppUpdateManager.currentVersionCode(this)) {
+                        showUpdateDialog(info);
+                    }
+                });
+            } catch (Exception ignored) {
+            }
+        });
+    }
+
+    private void showUpdateDialog(AppUpdateManager.UpdateInfo info) {
+        if (rootFrame == null || updateOverlay != null) {
+            return;
+        }
+        UpdateText labels = UpdateText.from(copy.code);
+        updateOverlay = new FrameLayout(this);
+        updateOverlay.setBackgroundColor(Color.argb(150, 0, 0, 0));
+        updateOverlay.setOnClickListener(view -> closeUpdateDialog());
+        applyContentInsets(updateOverlay, true);
+        rootFrame.addView(updateOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        LinearLayout card = panel();
+        card.setClickable(true);
+        card.setOnClickListener(view -> {
+        });
+        card.setPadding(dp(20), dp(14), dp(20), dp(20));
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                Math.min(dp(360), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        cardParams.gravity = Gravity.CENTER;
+        updateOverlay.addView(card, cardParams);
+
+        LinearLayout header = new LinearLayout(this);
+        header.setOrientation(LinearLayout.HORIZONTAL);
+        header.setGravity(Gravity.CENTER_VERTICAL);
+        card.addView(header, matchWrap());
+
+        TextView title = text(info.title(copy.code), 20, palette.text, Typeface.BOLD);
+        title.setPadding(0, 0, dp(8), 0);
+        header.addView(title, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        Button close = iconButton("×");
+        close.setTextSize(22);
+        close.setContentDescription(copy.closeDescription());
+        close.setOnClickListener(view -> closeUpdateDialog());
+        header.addView(close, new LinearLayout.LayoutParams(dp(48), dp(48)));
+
+        TextView version = text(labels.version + " " + info.versionName, 13, palette.muted, Typeface.BOLD);
+        version.setPadding(0, dp(4), 0, dp(10));
+        card.addView(version, matchWrap());
+
+        TextView note = text(info.note(copy.code), 15, palette.text, Typeface.NORMAL);
+        card.addView(note, matchWrap());
+
+        TextView repoLink = updateLink(labels.repository);
+        repoLink.setOnClickListener(view -> openExternal(info.repoUrl));
+        card.addView(repoLink, topMargin(matchWrap(), dp(14)));
+
+        TextView apkLink = updateLink(labels.directDownload);
+        apkLink.setOnClickListener(view -> openExternal(info.apkUrl));
+        card.addView(apkLink, topMargin(matchWrap(), dp(8)));
+
+        TextView status = text("", 12, palette.muted, Typeface.NORMAL);
+        status.setGravity(Gravity.CENTER);
+        card.addView(status, topMargin(matchWrap(), dp(10)));
+
+        Button install = primaryButton(labels.installUpdate);
+        install.setOnClickListener(view -> downloadUpdate(info, install, status, labels));
+        card.addView(install, topMargin(matchWrap(), dp(8)));
+    }
+
+    private TextView updateLink(String label) {
+        TextView link = text(label, 14, palette.accent, Typeface.BOLD);
+        link.setGravity(Gravity.CENTER_VERTICAL);
+        link.setMinHeight(dp(48));
+        link.setPaintFlags(link.getPaintFlags() | android.graphics.Paint.UNDERLINE_TEXT_FLAG);
+        return link;
+    }
+
+    private void downloadUpdate(AppUpdateManager.UpdateInfo info, Button button, TextView status, UpdateText labels) {
+        button.setEnabled(false);
+        button.setText(labels.downloading);
+        status.setText(labels.verifying);
+        updateExecutor.execute(() -> {
+            try {
+                File apk = AppUpdateManager.downloadAndVerify(this, info);
+                mainHandler.post(() -> {
+                    pendingUpdateFile = apk;
+                    button.setText(labels.openInstaller);
+                    status.setText(labels.ready);
+                    button.setEnabled(true);
+                    button.setOnClickListener(view -> requestPackageInstall(apk, labels));
+                    requestPackageInstall(apk, labels);
+                });
+            } catch (Exception error) {
+                mainHandler.post(() -> {
+                    button.setText(labels.retry);
+                    button.setEnabled(true);
+                    status.setText(labels.failed);
+                });
+            }
+        });
+    }
+
+    private void requestPackageInstall(File apk, UpdateText labels) {
+        if (!getPackageManager().canRequestPackageInstalls()) {
+            toast(labels.allowInstall);
+            Intent settings = new Intent(
+                    Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                    Uri.parse("package:" + getPackageName())
+            );
+            startActivityForResult(settings, REQ_INSTALL_PERMISSION);
+            return;
+        }
+        launchPackageInstaller(apk);
+    }
+
+    private void launchPackageInstaller(File apk) {
+        Uri uri = Uri.parse("content://" + getPackageName() + ".updates/" + UpdateFileProvider.FILE_NAME);
+        Intent install = new Intent(Intent.ACTION_VIEW);
+        install.setDataAndType(uri, "application/vnd.android.package-archive");
+        install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+        try {
+            startActivity(install);
+        } catch (Exception error) {
+            toast(UpdateText.from(copy.code).failed);
+        }
+    }
+
+    private void openExternal(String url) {
+        try {
+            startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+        } catch (Exception ignored) {
+        }
+    }
+
+    private void closeUpdateDialog() {
+        if (updateOverlay != null && rootFrame != null) {
+            rootFrame.removeView(updateOverlay);
+            updateOverlay = null;
+        }
+    }
+
     private byte[] compressImage(Uri uri) throws Exception {
+        int orientation = ExifInterface.ORIENTATION_NORMAL;
+        try (InputStream input = getContentResolver().openInputStream(uri)) {
+            if (input != null) {
+                ExifInterface exif = new ExifInterface(input);
+                orientation = exif.getAttributeInt(ExifInterface.TAG_ORIENTATION, ExifInterface.ORIENTATION_NORMAL);
+            }
+        } catch (Exception ignored) {
+        }
+
         BitmapFactory.Options bounds = new BitmapFactory.Options();
         bounds.inJustDecodeBounds = true;
         try (InputStream input = getContentResolver().openInputStream(uri)) {
@@ -956,6 +1324,8 @@ public class MainActivity extends Activity {
             throw new IllegalArgumentException(copy.imageLoadFailed);
         }
 
+        bitmap = applyExifOrientation(bitmap, orientation);
+
         int width = bitmap.getWidth();
         int height = bitmap.getHeight();
         int longSide = Math.max(width, height);
@@ -970,19 +1340,71 @@ public class MainActivity extends Activity {
             bitmap = scaled;
         }
 
-        int[] qualities = {55, 50, 45, 40, 35};
-        byte[] best = null;
-        for (int quality : qualities) {
-            ByteArrayOutputStream output = new ByteArrayOutputStream();
-            bitmap.compress(Bitmap.CompressFormat.WEBP, quality, output);
-            best = output.toByteArray();
-            if (best.length <= IMAGE_LIMIT_BYTES) {
-                bitmap.recycle();
-                return best;
+        int[] qualities = {60, 52, 45, 38, 32};
+        while (true) {
+            for (int quality : qualities) {
+                ByteArrayOutputStream output = new ByteArrayOutputStream();
+                bitmap.compress(Bitmap.CompressFormat.WEBP, quality, output);
+                byte[] encoded = output.toByteArray();
+                if (encoded.length <= IMAGE_LIMIT_BYTES) {
+                    bitmap.recycle();
+                    return encoded;
+                }
             }
+
+            int currentLongSide = Math.max(bitmap.getWidth(), bitmap.getHeight());
+            if (currentLongSide <= 420) {
+                break;
+            }
+            float scale = 0.82f;
+            Bitmap smaller = Bitmap.createScaledBitmap(
+                    bitmap,
+                    Math.max(1, Math.round(bitmap.getWidth() * scale)),
+                    Math.max(1, Math.round(bitmap.getHeight() * scale)),
+                    true
+            );
+            bitmap.recycle();
+            bitmap = smaller;
         }
         bitmap.recycle();
         throw new IllegalArgumentException(copy.imageTooLargeAfterCompression);
+    }
+
+    private Bitmap applyExifOrientation(Bitmap bitmap, int orientation) {
+        Matrix matrix = new Matrix();
+        switch (orientation) {
+            case ExifInterface.ORIENTATION_FLIP_HORIZONTAL:
+                matrix.setScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_180:
+                matrix.setRotate(180f);
+                break;
+            case ExifInterface.ORIENTATION_FLIP_VERTICAL:
+                matrix.setRotate(180f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSPOSE:
+                matrix.setRotate(90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_90:
+                matrix.setRotate(90f);
+                break;
+            case ExifInterface.ORIENTATION_TRANSVERSE:
+                matrix.setRotate(-90f);
+                matrix.postScale(-1f, 1f);
+                break;
+            case ExifInterface.ORIENTATION_ROTATE_270:
+                matrix.setRotate(-90f);
+                break;
+            default:
+                return bitmap;
+        }
+        Bitmap transformed = Bitmap.createBitmap(bitmap, 0, 0, bitmap.getWidth(), bitmap.getHeight(), matrix, true);
+        if (transformed != bitmap) {
+            bitmap.recycle();
+        }
+        return transformed;
     }
 
     private LinearLayout panel() {
@@ -1008,11 +1430,11 @@ public class MainActivity extends Activity {
         TextView view = text(label, 15, selected ? Color.WHITE : palette.text, selected ? Typeface.BOLD : Typeface.NORMAL);
         view.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         view.setSingleLine(false);
-        view.setMinHeight(dp(42));
+        view.setMinHeight(dp(48));
         view.setPadding(dp(13), 0, dp(13), 0);
         view.setBackground(selected
-                ? round(palette.menuSelected, dp(14))
-                : strokeRound(withAlpha(palette.menuItem, 190), withAlpha(palette.border, 185), dp(14)));
+                ? round(palette.menuSelected, dp(8))
+                : strokeRound(withAlpha(palette.menuItem, 190), withAlpha(palette.border, 185), dp(8)));
         return view;
     }
 
@@ -1044,7 +1466,7 @@ public class MainActivity extends Activity {
         input.setHintTextColor(palette.muted);
         input.setTextSize(16);
         input.setPadding(dp(12), dp(9), dp(12), dp(9));
-        input.setBackground(round(withAlpha(palette.input, 164), dp(13)));
+        input.setBackground(round(withAlpha(palette.input, 142), dp(13)));
         return input;
     }
 
@@ -1120,6 +1542,11 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
         background.post(() -> positionBackground(background));
+        background.addOnLayoutChangeListener((view, left, top, right, bottom, oldLeft, oldTop, oldRight, oldBottom) -> {
+            if (right - left != oldRight - oldLeft || bottom - top != oldBottom - oldTop) {
+                positionBackground(background);
+            }
+        });
     }
 
     private void positionBackground(ImageView imageView) {
@@ -1169,12 +1596,6 @@ public class MainActivity extends Activity {
         int baseTop = view.getPaddingTop();
         int baseRight = view.getPaddingRight();
         int baseBottom = view.getPaddingBottom();
-        view.setPadding(
-                baseLeft,
-                baseTop + systemBarSize("status_bar_height"),
-                baseRight,
-                baseBottom + (includeBottom ? systemBarSize("navigation_bar_height") : 0)
-        );
 
         view.setOnApplyWindowInsetsListener((target, insets) -> {
             int top = insets.getSystemWindowInsetTop();
@@ -1196,21 +1617,79 @@ public class MainActivity extends Activity {
         view.requestApplyInsets();
     }
 
-    private int systemBarSize(String resourceName) {
-        int resourceId = getResources().getIdentifier(resourceName, "dimen", "android");
-        if (resourceId == 0) {
-            return 0;
-        }
-        return getResources().getDimensionPixelSize(resourceId);
-    }
-
     private void applySystemBars() {
         Window window = getWindow();
         window.setStatusBarColor(palette.backgroundA);
         window.setNavigationBarColor(palette.surface);
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-            int flags = palette.lightSystemBars ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR : 0;
-            window.getDecorView().setSystemUiVisibility(flags);
+        int flags = palette.lightSystemBars
+                ? View.SYSTEM_UI_FLAG_LIGHT_STATUS_BAR | View.SYSTEM_UI_FLAG_LIGHT_NAVIGATION_BAR
+                : 0;
+        window.getDecorView().setSystemUiVisibility(flags);
+    }
+
+    private void captureComposerState() {
+        if (recipientInput != null) {
+            draftRecipient = recipientInput.getText().toString();
+        }
+        if (messageInput != null) {
+            draftMessage = messageInput.getText().toString();
+        }
+    }
+
+    private boolean accountMatches(AccountStore.Account account) {
+        return currentAccount != null
+                && account.username.equals(currentAccount.username)
+                && account.token.equals(currentAccount.token);
+    }
+
+    private void runPendingMessageReload() {
+        if (!messageReloadPending) {
+            return;
+        }
+        boolean showErrors = pendingMessageErrors;
+        messageReloadPending = false;
+        pendingMessageErrors = false;
+        loadMessages(true, showErrors);
+    }
+
+    private void runPendingContactReload() {
+        if (!contactsReloadPending) {
+            return;
+        }
+        boolean showErrors = pendingContactErrors;
+        contactsReloadPending = false;
+        pendingContactErrors = false;
+        loadContacts(showErrors);
+    }
+
+    private void schedulePolling() {
+        mainHandler.removeCallbacks(pollRunnable);
+        if (activityStarted && chatVisible && currentAccount != null) {
+            mainHandler.postDelayed(pollRunnable, 4000);
+        }
+    }
+
+    private boolean isUnauthorized(Exception error) {
+        return error instanceof ChatApi.ApiException
+                && ((ChatApi.ApiException) error).statusCode == 401;
+    }
+
+    private String errorMessage(Exception error) {
+        String message = error.getMessage();
+        return message == null || message.trim().isEmpty() ? copy.actionFailed : message;
+    }
+
+    private void handleExpiredSession(AccountStore.Account account) {
+        if (!accountMatches(account)) {
+            return;
+        }
+        accountStore.removeAccount(account.username);
+        toast(copy.sessionExpired());
+        currentAccount = accountStore.getActiveAccount();
+        if (currentAccount == null) {
+            showLogin(false);
+        } else {
+            showChat(true);
         }
     }
 
@@ -1231,26 +1710,30 @@ public class MainActivity extends Activity {
     }
 
     private interface Failure {
-        void accept(String error);
+        void accept(Exception error);
     }
 
     private <T> void runTask(Task<T> task, Success<T> success, Failure failure) {
         executor.execute(() -> {
             try {
                 T result = task.run();
-                mainHandler.post(() -> success.accept(result));
+                mainHandler.post(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        success.accept(result);
+                    }
+                });
             } catch (Exception e) {
-                String message = e.getMessage();
-                if (message == null || message.trim().isEmpty()) {
-                    message = copy.actionFailed;
-                }
-                String finalMessage = message;
-                mainHandler.post(() -> failure.accept(finalMessage));
+                mainHandler.post(() -> {
+                    if (!isFinishing() && !isDestroyed()) {
+                        failure.accept(e);
+                    }
+                });
             }
         });
     }
 
     private static final class AppText {
+        final String code;
         final String loginSubtitle;
         final String username;
         final String password;
@@ -1297,6 +1780,7 @@ public class MainActivity extends Activity {
         private final String asPrefix;
 
         AppText(
+                String code,
                 String loginSubtitle,
                 String username,
                 String password,
@@ -1342,6 +1826,7 @@ public class MainActivity extends Activity {
                 String allMessagesPrefix,
                 String asPrefix
         ) {
+            this.code = code;
             this.loginSubtitle = loginSubtitle;
             this.username = username;
             this.password = password;
@@ -1408,9 +1893,46 @@ public class MainActivity extends Activity {
             return asPrefix + user;
         }
 
+        String menuDescription() {
+            if ("fr".equals(code)) return "Menu";
+            if ("ru".equals(code)) return "Меню";
+            if ("uk".equals(code)) return "Меню";
+            if ("it".equals(code)) return "Menu";
+            if ("en".equals(code)) return "Menu";
+            return "Menü";
+        }
+
+        String reloadDescription() {
+            if ("en".equals(code)) return "Reload";
+            if ("fr".equals(code)) return "Actualiser";
+            if ("ru".equals(code)) return "Обновить";
+            if ("uk".equals(code)) return "Оновити";
+            if ("it".equals(code)) return "Aggiorna";
+            return "Neu laden";
+        }
+
+        String closeDescription() {
+            if ("en".equals(code)) return "Close";
+            if ("fr".equals(code)) return "Fermer";
+            if ("ru".equals(code)) return "Закрыть";
+            if ("uk".equals(code)) return "Закрити";
+            if ("it".equals(code)) return "Chiudi";
+            return "Schließen";
+        }
+
+        String sessionExpired() {
+            if ("en".equals(code)) return "Your session has expired. Please sign in again.";
+            if ("fr".equals(code)) return "Votre session a expiré. Veuillez vous reconnecter.";
+            if ("ru".equals(code)) return "Сеанс истёк. Войдите снова.";
+            if ("uk".equals(code)) return "Сеанс завершився. Увійдіть знову.";
+            if ("it".equals(code)) return "La sessione è scaduta. Accedi di nuovo.";
+            return "Deine Sitzung ist abgelaufen. Bitte melde dich erneut an.";
+        }
+
         static AppText from(String code) {
             if ("en".equals(code)) {
                 return new AppText(
+                        "en",
                         "Sign in and start chatting",
                         "Username",
                         "Password",
@@ -1459,6 +1981,7 @@ public class MainActivity extends Activity {
             }
             if ("fr".equals(code)) {
                 return new AppText(
+                        "fr",
                         "Connectez-vous et discutez directement",
                         "Nom d’utilisateur",
                         "Mot de passe",
@@ -1507,6 +2030,7 @@ public class MainActivity extends Activity {
             }
             if ("ru".equals(code)) {
                 return new AppText(
+                        "ru",
                         "Войдите и сразу пишите",
                         "Имя пользователя",
                         "Пароль",
@@ -1555,6 +2079,7 @@ public class MainActivity extends Activity {
             }
             if ("uk".equals(code)) {
                 return new AppText(
+                        "uk",
                         "Увійдіть і одразу пишіть",
                         "Ім’я користувача",
                         "Пароль",
@@ -1603,6 +2128,7 @@ public class MainActivity extends Activity {
             }
             if ("it".equals(code)) {
                 return new AppText(
+                        "it",
                         "Accedi e scrivi subito",
                         "Nome utente",
                         "Password",
@@ -1650,10 +2176,11 @@ public class MainActivity extends Activity {
                 );
             }
             return new AppText(
+                    "de",
                     "Anmelden und direkt schreiben",
                     "Benutzername",
                     "Passwort",
-                    "Login",
+                    "Anmelden",
                     "Benutzername und Passwort erforderlich.",
                     "Registrieren im Web",
                     "Registrieren",
@@ -1672,16 +2199,16 @@ public class MainActivity extends Activity {
                     "Kein Konto",
                     "Alle Nachrichten",
                     "Chat-Blog",
-                    "Security",
-                    "Theme",
-                    "Light",
-                    "Dark",
+                    "Sicherheit",
+                    "Design",
+                    "Hell",
+                    "Dunkel",
                     "Sprache",
                     "Konten",
                     "Weiteres Konto anmelden",
                     "Kontakte",
                     "Noch keine Kontakte.",
-                    "Logout",
+                    "Abmelden",
                     "Chat",
                     "Bild wird geladen...",
                     "Empfänger übernehmen",
@@ -1695,6 +2222,67 @@ public class MainActivity extends Activity {
                     "Alle Nachrichten - ",
                     "als "
             );
+        }
+    }
+
+    private static final class UpdateText {
+        final String version;
+        final String repository;
+        final String directDownload;
+        final String installUpdate;
+        final String downloading;
+        final String verifying;
+        final String openInstaller;
+        final String ready;
+        final String retry;
+        final String failed;
+        final String allowInstall;
+
+        UpdateText(String version, String repository, String directDownload, String installUpdate,
+                   String downloading, String verifying, String openInstaller, String ready,
+                   String retry, String failed, String allowInstall) {
+            this.version = version;
+            this.repository = repository;
+            this.directDownload = directDownload;
+            this.installUpdate = installUpdate;
+            this.downloading = downloading;
+            this.verifying = verifying;
+            this.openInstaller = openInstaller;
+            this.ready = ready;
+            this.retry = retry;
+            this.failed = failed;
+            this.allowInstall = allowInstall;
+        }
+
+        static UpdateText from(String language) {
+            if ("en".equals(language)) {
+                return new UpdateText("Version", "Open GitHub repository", "Download APK directly", "Install update",
+                        "Downloading...", "Download and signature are being verified.", "Open installer",
+                        "Update is ready.", "Try again", "Update failed.", "Please allow a38-Chat to install updates.");
+            }
+            if ("fr".equals(language)) {
+                return new UpdateText("Version", "Ouvrir le dépôt GitHub", "Télécharger l’APK", "Installer la mise à jour",
+                        "Téléchargement...", "Vérification du téléchargement et de la signature.", "Ouvrir l’installation",
+                        "La mise à jour est prête.", "Réessayer", "Échec de la mise à jour.", "Autorisez a38-Chat à installer des mises à jour.");
+            }
+            if ("ru".equals(language)) {
+                return new UpdateText("Версия", "Открыть репозиторий GitHub", "Скачать APK напрямую", "Установить обновление",
+                        "Загрузка...", "Проверка загрузки и подписи.", "Открыть установщик",
+                        "Обновление готово.", "Повторить", "Не удалось обновить.", "Разрешите a38-Chat устанавливать обновления.");
+            }
+            if ("uk".equals(language)) {
+                return new UpdateText("Версія", "Відкрити репозиторій GitHub", "Завантажити APK", "Встановити оновлення",
+                        "Завантаження...", "Перевірка завантаження та підпису.", "Відкрити інсталятор",
+                        "Оновлення готове.", "Повторити", "Не вдалося оновити.", "Дозвольте a38-Chat встановлювати оновлення.");
+            }
+            if ("it".equals(language)) {
+                return new UpdateText("Versione", "Apri repository GitHub", "Scarica direttamente l’APK", "Installa aggiornamento",
+                        "Download...", "Verifica del download e della firma.", "Apri installazione",
+                        "L’aggiornamento è pronto.", "Riprova", "Aggiornamento non riuscito.", "Consenti ad a38-Chat di installare aggiornamenti.");
+            }
+            return new UpdateText("Version", "GitHub-Repository öffnen", "APK direkt herunterladen", "Update installieren",
+                    "Wird heruntergeladen...", "Download und Signatur werden geprüft.", "Installer öffnen",
+                    "Das Update ist bereit.", "Erneut versuchen", "Update fehlgeschlagen.", "Bitte erlaube a38-Chat, Updates zu installieren.");
         }
     }
 
