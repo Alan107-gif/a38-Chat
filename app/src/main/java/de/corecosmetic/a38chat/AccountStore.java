@@ -26,7 +26,11 @@ final class AccountStore {
     private static final String KEY_ACTIVE = "active_username";
     private static final String KEY_THEME = "theme";
     private static final String KEY_LANGUAGE = "language";
+    private static final String KEY_NOTIFICATIONS_ENABLED = "notifications_enabled";
+    private static final String KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked";
+    private static final String KEY_NOTIFICATION_TIMEOUT = "notification_timeout";
     private static final String KEY_ALIAS = "a38_chat_accounts_v1";
+    static final long DEFAULT_NOTIFICATION_TIMEOUT = 5 * 60 * 1000L;
 
     private final SharedPreferences prefs;
 
@@ -130,6 +134,30 @@ final class AccountStore {
 
     void setLanguage(String language) {
         prefs.edit().putString(KEY_LANGUAGE, language == null ? "de" : language).apply();
+    }
+
+    boolean notificationsEnabled() {
+        return prefs.getBoolean(KEY_NOTIFICATIONS_ENABLED, true);
+    }
+
+    void setNotificationsEnabled(boolean enabled) {
+        prefs.edit().putBoolean(KEY_NOTIFICATIONS_ENABLED, enabled).apply();
+    }
+
+    boolean notificationPermissionAsked() {
+        return prefs.getBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, false);
+    }
+
+    void setNotificationPermissionAsked() {
+        prefs.edit().putBoolean(KEY_NOTIFICATION_PERMISSION_ASKED, true).apply();
+    }
+
+    long notificationTimeout() {
+        return prefs.getLong(KEY_NOTIFICATION_TIMEOUT, DEFAULT_NOTIFICATION_TIMEOUT);
+    }
+
+    void setNotificationTimeout(long timeout) {
+        prefs.edit().putLong(KEY_NOTIFICATION_TIMEOUT, Math.max(0L, timeout)).apply();
     }
 
     private void saveAccounts(List<Account> accounts) {

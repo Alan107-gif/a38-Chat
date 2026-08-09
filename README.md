@@ -20,7 +20,8 @@ Version 1.0 uses a dedicated release certificate. An older test APK signed with 
 - Stay signed in and start writing without logging in every time.
 - Add multiple accounts and switch between them from the side menu.
 - Find previous chat partners automatically in the contact list.
-- Scroll through older messages without being forced back to the newest message.
+- Start at the newest message when opening the app or a chat; automatic scrolling continues only while you remain at the bottom.
+- Receive chat notifications and choose when they disappear automatically.
 - Send text with umlauts, Cyrillic and other Unicode characters.
 - Share compressed images and keep portrait photos correctly oriented.
 - Tap an image to view it large and use its recipient for a new message.

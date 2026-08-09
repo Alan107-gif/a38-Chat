@@ -32,6 +32,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
 
@@ -50,10 +51,16 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public class MainActivity extends Activity {
+    static final String EXTRA_ACCOUNT = "notification_account";
+    static final String EXTRA_PEER = "notification_peer";
     private static final int REQ_IMAGE = 7001;
     private static final int REQ_INSTALL_PERMISSION = 7002;
+    private static final int REQ_NOTIFICATIONS = 7003;
     private static final int IMAGE_LIMIT_BYTES = 120 * 1024;
     private static final int IMAGE_MAX_SIDE = 1024;
+    private static volatile boolean foregroundChatVisible;
+    private static volatile String foregroundAccount = "";
+    private static volatile String foregroundPeer = "";
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
@@ -125,10 +132,11 @@ public class MainActivity extends Activity {
         applySystemBars();
 
         currentAccount = accountStore.getActiveAccount();
+        boolean openedFromNotification = consumeNotificationIntent(getIntent());
         if (currentAccount == null) {
             showLogin(false);
         } else {
-            if (savedInstanceState != null) {
+            if (savedInstanceState != null && !openedFromNotification) {
                 selectedPeer = savedInstanceState.getString("selected_peer", "");
                 draftRecipient = savedInstanceState.getString("draft_recipient", selectedPeer);
                 draftMessage = savedInstanceState.getString("draft_message", "");
@@ -136,7 +144,7 @@ public class MainActivity extends Activity {
                 selectedImageUri = imageUri.isEmpty() ? null : Uri.parse(imageUri);
                 showChat(false);
             } else {
-                showChat(true);
+                showChat(!openedFromNotification);
             }
         }
     }
@@ -145,15 +153,30 @@ public class MainActivity extends Activity {
     protected void onStart() {
         super.onStart();
         activityStarted = true;
+        updateNotificationVisibility();
         schedulePolling();
+        ensureNotificationMonitoring(false);
         checkForUpdatesOnce();
     }
 
     @Override
     protected void onStop() {
         activityStarted = false;
+        updateNotificationVisibility();
         mainHandler.removeCallbacks(pollRunnable);
         super.onStop();
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if (consumeNotificationIntent(intent) && currentAccount != null) {
+            closeMenu();
+            closeImageViewer();
+            closeUpdateDialog();
+            showChat(false, true);
+        }
     }
 
     @Override
@@ -169,6 +192,7 @@ public class MainActivity extends Activity {
     @Override
     protected void onDestroy() {
         chatVisible = false;
+        updateNotificationVisibility();
         mainHandler.removeCallbacks(pollRunnable);
         executor.shutdownNow();
         imageExecutor.shutdownNow();
@@ -177,6 +201,23 @@ public class MainActivity extends Activity {
         loadingImageIds.clear();
         pendingImageViews.clear();
         super.onDestroy();
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, String[] permissions, int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode != REQ_NOTIFICATIONS) {
+            return;
+        }
+        boolean granted = grantResults.length > 0 && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+        accountStore.setNotificationsEnabled(granted);
+        if (granted) {
+            ChatNotificationService.startIfEnabled(this);
+        } else {
+            ChatNotificationService.stop(this);
+            toast(NotificationText.from(accountStore.getLanguage()).permissionDenied);
+        }
+        closeMenu();
     }
 
     @Override
@@ -223,6 +264,7 @@ public class MainActivity extends Activity {
     private void showLogin(boolean canBack) {
         captureComposerState();
         chatVisible = false;
+        updateNotificationVisibility();
         mainHandler.removeCallbacks(pollRunnable);
         copy = AppText.from(accountStore.getLanguage());
 
@@ -314,6 +356,7 @@ public class MainActivity extends Activity {
         TextView note = text(copy.loginNote, 13, palette.muted, Typeface.NORMAL);
         note.setPadding(0, dp(14), 0, 0);
         panel.addView(note, matchWrap());
+        ensureNotificationMonitoring(false);
     }
 
     private void doLogin(String username, String password, Button button) {
@@ -334,7 +377,11 @@ public class MainActivity extends Activity {
     }
 
     private void showChat(boolean resetPeer) {
-        if (!resetPeer) {
+        showChat(resetPeer, false);
+    }
+
+    private void showChat(boolean resetPeer, boolean skipComposerCapture) {
+        if (!resetPeer && !skipComposerCapture) {
             captureComposerState();
         }
         chatVisible = false;
@@ -399,9 +446,11 @@ public class MainActivity extends Activity {
 
         updateConversationTitle();
         chatVisible = true;
+        updateNotificationVisibility();
         loadContacts(true);
         loadMessages(true, true);
         schedulePolling();
+        ensureNotificationMonitoring(false);
     }
 
     private LinearLayout buildTopBar() {
@@ -596,9 +645,14 @@ public class MainActivity extends Activity {
                             visibleMessageIds.clear();
                             addVisibleMessages(result.messages);
                             renderMessages();
+                            scrollMessagesToBottom();
                         } else {
+                            boolean wasNearBottom = isMessagesScrollNearBottom();
                             List<ChatApi.Message> additions = addVisibleMessages(result.messages);
                             appendMessageRows(additions);
+                            if (ScrollPolicy.shouldScrollAfterAppend(wasNearBottom, additions.size())) {
+                                scrollMessagesToBottom();
+                            }
                         }
                         lastMessageId = Math.max(lastMessageId, result.lastId);
                     }
@@ -684,6 +738,30 @@ public class MainActivity extends Activity {
         for (ChatApi.Message message : visibleMessages) {
             messagesBox.addView(messageRow(message), matchWrap());
         }
+    }
+
+    private boolean isMessagesScrollNearBottom() {
+        if (messagesScroll == null || messagesScroll.getChildCount() == 0) {
+            return true;
+        }
+        View content = messagesScroll.getChildAt(0);
+        return ScrollPolicy.isNearBottom(
+                messagesScroll.getScrollY(),
+                messagesScroll.getHeight(),
+                content.getHeight(),
+                dp(36)
+        );
+    }
+
+    private void scrollMessagesToBottom() {
+        if (messagesScroll == null) {
+            return;
+        }
+        messagesScroll.post(() -> {
+            if (messagesScroll != null && messagesScroll.getChildCount() > 0) {
+                messagesScroll.scrollTo(0, messagesScroll.getChildAt(0).getHeight());
+            }
+        });
     }
 
     private View messageRow(ChatApi.Message message) {
@@ -992,6 +1070,8 @@ public class MainActivity extends Activity {
         addLanguageButton(languagesBottom, "Українська", "uk");
         addLanguageButton(languagesBottom, "Italiano", "it");
 
+        addNotificationSettings(panel);
+
         panel.addView(section(copy.accounts));
         for (AccountStore.Account account : accountStore.loadAccounts()) {
             panel.addView(accountRow(account), topMargin(matchWrap(), dp(6)));
@@ -1047,6 +1127,59 @@ public class MainActivity extends Activity {
             showChat(false);
         });
         LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(48), 1);
+        params.rightMargin = dp(5);
+        parent.addView(button, params);
+    }
+
+    private void addNotificationSettings(LinearLayout panel) {
+        NotificationText notificationText = NotificationText.from(accountStore.getLanguage());
+        panel.addView(section(notificationText.section));
+
+        Switch enabled = new Switch(this);
+        enabled.setText(notificationText.enabled);
+        enabled.setTextColor(palette.text);
+        enabled.setTextSize(14);
+        enabled.setGravity(Gravity.CENTER_VERTICAL);
+        enabled.setPadding(dp(12), 0, dp(10), 0);
+        enabled.setBackground(round(withAlpha(palette.menuItem, 220), dp(12)));
+        enabled.setChecked(accountStore.notificationsEnabled());
+        enabled.setOnCheckedChangeListener((button, checked) -> {
+            accountStore.setNotificationsEnabled(checked);
+            if (checked) {
+                ensureNotificationMonitoring(true);
+            } else {
+                ChatNotificationService.stop(this);
+            }
+        });
+        panel.addView(enabled, new LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, dp(48)));
+
+        TextView timeoutLabel = text(notificationText.removeAfter, 12, palette.muted, Typeface.BOLD);
+        timeoutLabel.setPadding(0, dp(10), 0, dp(6));
+        panel.addView(timeoutLabel, matchWrap());
+
+        LinearLayout firstRow = new LinearLayout(this);
+        firstRow.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(firstRow, matchWrap());
+        addNotificationTimeoutButton(firstRow, notificationText.oneMinute, 60_000L);
+        addNotificationTimeoutButton(firstRow, notificationText.fiveMinutes, 5 * 60_000L);
+        addNotificationTimeoutButton(firstRow, notificationText.fifteenMinutes, 15 * 60_000L);
+
+        LinearLayout secondRow = new LinearLayout(this);
+        secondRow.setOrientation(LinearLayout.HORIZONTAL);
+        panel.addView(secondRow, topMargin(matchWrap(), dp(6)));
+        addNotificationTimeoutButton(secondRow, notificationText.oneHour, 60 * 60_000L);
+        addNotificationTimeoutButton(secondRow, notificationText.never, 0L);
+    }
+
+    private void addNotificationTimeoutButton(LinearLayout parent, String label, long timeout) {
+        TextView button = menuChip(label, timeout == accountStore.notificationTimeout());
+        button.setTextSize(11);
+        button.setOnClickListener(view -> {
+            accountStore.setNotificationTimeout(timeout);
+            closeMenu();
+            openMenu();
+        });
+        LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(44), 1);
         params.rightMargin = dp(5);
         parent.addView(button, params);
     }
@@ -1128,6 +1261,63 @@ public class MainActivity extends Activity {
         if (recipientInput != null && !selectedPeer.isEmpty()) {
             recipientInput.setText(selectedPeer);
         }
+        updateNotificationVisibility();
+    }
+
+    static boolean isConversationVisible(String account, String peer) {
+        return foregroundChatVisible
+                && account.equals(foregroundAccount)
+                && (foregroundPeer.isEmpty() || foregroundPeer.equals(peer));
+    }
+
+    private void updateNotificationVisibility() {
+        foregroundChatVisible = activityStarted && chatVisible && currentAccount != null;
+        foregroundAccount = currentAccount == null ? "" : currentAccount.username;
+        foregroundPeer = selectedPeer == null ? "" : selectedPeer;
+    }
+
+    private boolean consumeNotificationIntent(Intent intent) {
+        if (intent == null) {
+            return false;
+        }
+        String accountName = intent.getStringExtra(EXTRA_ACCOUNT);
+        String peer = intent.getStringExtra(EXTRA_PEER);
+        if (accountName == null || accountName.isEmpty() || peer == null || peer.isEmpty()) {
+            return false;
+        }
+        for (AccountStore.Account account : accountStore.loadAccounts()) {
+            if (account.username.equals(accountName)) {
+                accountStore.setActiveUsername(accountName);
+                currentAccount = account;
+                selectedPeer = peer;
+                draftRecipient = peer;
+                draftMessage = "";
+                selectedImageUri = null;
+                intent.removeExtra(EXTRA_ACCOUNT);
+                intent.removeExtra(EXTRA_PEER);
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private void ensureNotificationMonitoring(boolean userInitiated) {
+        if (!accountStore.notificationsEnabled() || accountStore.loadAccounts().isEmpty()) {
+            ChatNotificationService.stop(this);
+            return;
+        }
+        if (!activityStarted) {
+            return;
+        }
+        if (!ChatNotificationService.hasPermission(this)) {
+            if (Build.VERSION.SDK_INT >= 33
+                    && (userInitiated || !accountStore.notificationPermissionAsked())) {
+                accountStore.setNotificationPermissionAsked();
+                requestPermissions(new String[]{Manifest.permission.POST_NOTIFICATIONS}, REQ_NOTIFICATIONS);
+            }
+            return;
+        }
+        ChatNotificationService.startIfEnabled(this);
     }
 
     private void openWeb(String url, String title) {

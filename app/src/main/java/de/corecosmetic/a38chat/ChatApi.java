@@ -176,7 +176,7 @@ final class ChatApi {
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(20000);
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "a38-Chat/1.0.0");
+        connection.setRequestProperty("User-Agent", "a38-Chat/1.0.1");
         if (token != null && !token.isEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer " + token);
         }
