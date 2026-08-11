@@ -93,6 +93,7 @@ public class MainActivity extends Activity {
     private FrameLayout menuOverlay;
     private FrameLayout imageOverlay;
     private FrameLayout updateOverlay;
+    private FrameLayout loginAlertOverlay;
     private Uri selectedImageUri;
     private File pendingUpdateFile;
     private String selectedPeer = "";
@@ -104,6 +105,7 @@ public class MainActivity extends Activity {
     private boolean messageReloadPending = false;
     private boolean pendingMessageErrors = false;
     private boolean loadingContacts = false;
+    private boolean loadingLoginEvents = false;
     private boolean contactsReloadPending = false;
     private boolean pendingContactErrors = false;
     private boolean chatVisible = false;
@@ -117,6 +119,7 @@ public class MainActivity extends Activity {
             if (activityStarted && chatVisible && currentAccount != null) {
                 loadMessages(false, false);
                 loadContacts(false);
+                loadLoginEvents();
                 mainHandler.postDelayed(this, 4000);
             }
         }
@@ -222,6 +225,10 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (loginAlertOverlay != null) {
+            closeLoginAlert();
+            return;
+        }
         if (updateOverlay != null) {
             closeUpdateDialog();
             return;
@@ -267,6 +274,8 @@ public class MainActivity extends Activity {
         updateNotificationVisibility();
         mainHandler.removeCallbacks(pollRunnable);
         copy = AppText.from(accountStore.getLanguage());
+
+        closeScreenOverlays();
 
         rootFrame = new FrameLayout(this);
         rootFrame.setBackground(makePageBackground());
@@ -364,6 +373,7 @@ public class MainActivity extends Activity {
                 () -> ChatApi.login(username, password, Build.MODEL == null ? "Android" : Build.MODEL),
                 result -> {
                     accountStore.upsertAccount(new AccountStore.Account(result.username, result.token));
+                    accountStore.setLoginEventCursor(result.username, result.loginEventId);
                     currentAccount = accountStore.getActiveAccount();
                     selectedPeer = "";
                     toast(copy.loggedInAs(result.username));
@@ -407,6 +417,8 @@ public class MainActivity extends Activity {
         copy = AppText.from(accountStore.getLanguage());
         applySystemBars();
 
+        closeScreenOverlays();
+
         rootFrame = new FrameLayout(this);
         rootFrame.setBackground(makePageBackground());
         setContentView(rootFrame);
@@ -449,6 +461,7 @@ public class MainActivity extends Activity {
         updateNotificationVisibility();
         loadContacts(true);
         loadMessages(true, true);
+        loadLoginEvents();
         schedulePolling();
         ensureNotificationMonitoring(false);
     }
@@ -706,6 +719,38 @@ public class MainActivity extends Activity {
         );
     }
 
+    private void loadLoginEvents() {
+        if (currentAccount == null || loadingLoginEvents) {
+            return;
+        }
+        loadingLoginEvents = true;
+        AccountStore.Account account = currentAccount;
+        long previousCursor = accountStore.loginEventCursor(account.username);
+        long requestCursor = Math.max(0L, previousCursor);
+        runTask(
+                () -> ChatApi.loginEvents(account.token, requestCursor),
+                result -> {
+                    loadingLoginEvents = false;
+                    if (!accountMatches(account)) {
+                        return;
+                    }
+                    accountStore.setLoginEventCursor(account.username, result.lastId);
+                    if (LoginEventPolicy.shouldAlert(previousCursor, result.events) && activityStarted) {
+                        ChatApi.LoginEvent latest = LoginEventPolicy.latest(result.events);
+                        if (latest != null) {
+                            showLoginAlert(latest, result.events.size());
+                        }
+                    }
+                },
+                error -> {
+                    loadingLoginEvents = false;
+                    if (accountMatches(account) && isUnauthorized(error)) {
+                        handleExpiredSession(account);
+                    }
+                }
+        );
+    }
+
     private List<ChatApi.Message> addVisibleMessages(List<ChatApi.Message> messages) {
         return MessageMerge.appendUnique(visibleMessages, visibleMessageIds, messages);
     }
@@ -772,6 +817,15 @@ public class MainActivity extends Activity {
         row.setOrientation(LinearLayout.VERTICAL);
         row.setGravity(outgoing ? Gravity.END : Gravity.START);
         row.setPadding(0, dp(5), 0, dp(5));
+        View.OnClickListener chooseRecipient = view -> {
+            selectedPeer = peer;
+            if (recipientInput != null) {
+                recipientInput.setText(peer);
+            }
+            updateConversationTitle();
+            loadMessages(true, true);
+        };
+        row.setOnClickListener(chooseRecipient);
 
         TextView meta = text(peer + "  " + message.createdAt, 11, palette.muted, Typeface.NORMAL);
         meta.setGravity(outgoing ? Gravity.END : Gravity.START);
@@ -782,14 +836,7 @@ public class MainActivity extends Activity {
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
         bubble.setBackground(round(outgoing ? palette.outgoing : palette.incoming, dp(16)));
-        bubble.setOnClickListener(view -> {
-            selectedPeer = peer;
-            if (recipientInput != null) {
-                recipientInput.setText(peer);
-            }
-            updateConversationTitle();
-            loadMessages(true, true);
-        });
+        bubble.setOnClickListener(chooseRecipient);
 
         if (message.isImage()) {
             ImageView image = new ImageView(this);
@@ -804,7 +851,10 @@ public class MainActivity extends Activity {
                 image.setBackgroundColor(palette.imagePlaceholder);
                 loadImage(message.id, image);
             }
-            image.setOnClickListener(view -> showImageViewer(message, peer));
+            image.setOnClickListener(view -> {
+                chooseRecipient.onClick(view);
+                showImageViewer(message, peer);
+            });
             int imageHeight = 190;
             if (message.imageWidth > 0 && message.imageHeight > 0) {
                 imageHeight = Math.round(260f * message.imageHeight / message.imageWidth);
@@ -814,7 +864,7 @@ public class MainActivity extends Activity {
             if (!message.text.isEmpty()) {
                 TextView caption = text(message.text, 15, outgoing ? Color.WHITE : palette.text, Typeface.NORMAL);
                 caption.setPadding(0, dp(8), 0, 0);
-                caption.setTextIsSelectable(true);
+                caption.setTextIsSelectable(false);
                 bubble.addView(caption, new LinearLayout.LayoutParams(
                         ViewGroup.LayoutParams.WRAP_CONTENT,
                         ViewGroup.LayoutParams.WRAP_CONTENT
@@ -823,7 +873,7 @@ public class MainActivity extends Activity {
         } else {
             TextView body = text(message.text, 16, outgoing ? Color.WHITE : palette.text, Typeface.NORMAL);
             body.setMaxWidth(dp(292));
-            body.setTextIsSelectable(true);
+            body.setTextIsSelectable(false);
             bubble.addView(body);
         }
 
@@ -909,12 +959,8 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.MATCH_PARENT
         ));
 
-        ImageView image = new ImageView(this);
-        image.setAdjustViewBounds(true);
-        image.setScaleType(ImageView.ScaleType.FIT_CENTER);
-        image.setClickable(true);
-        image.setOnClickListener(view -> {
-        });
+        ZoomImageView image = new ZoomImageView(this);
+        image.setOutsideTapListener(this::closeImageViewer);
         FrameLayout.LayoutParams imageParams = new FrameLayout.LayoutParams(
                 ViewGroup.LayoutParams.MATCH_PARENT,
                 ViewGroup.LayoutParams.MATCH_PARENT
@@ -1256,7 +1302,7 @@ public class MainActivity extends Activity {
         }
         if (subtitleView != null) {
             String account = currentAccount == null ? "" : currentAccount.username;
-            subtitleView.setText(selectedPeer.isEmpty() ? copy.allMessagesFor(account) : copy.asAccount(account));
+            subtitleView.setText(selectedPeer.isEmpty() ? copy.allMessagesFor(account) : copy.writingAs(account));
         }
         if (recipientInput != null && !selectedPeer.isEmpty()) {
             recipientInput.setText(selectedPeer);
@@ -1480,6 +1526,66 @@ public class MainActivity extends Activity {
             rootFrame.removeView(updateOverlay);
             updateOverlay = null;
         }
+    }
+
+    private void showLoginAlert(ChatApi.LoginEvent event, int eventCount) {
+        if (rootFrame == null) {
+            return;
+        }
+        closeLoginAlert();
+        LoginAlertText labels = LoginAlertText.from(copy.code);
+        loginAlertOverlay = new FrameLayout(this);
+        loginAlertOverlay.setBackgroundColor(Color.argb(170, 0, 0, 0));
+        loginAlertOverlay.setOnClickListener(view -> closeLoginAlert());
+        applyContentInsets(loginAlertOverlay, true);
+        rootFrame.addView(loginAlertOverlay, new FrameLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+        ));
+
+        LinearLayout card = panel();
+        card.setClickable(true);
+        card.setOnClickListener(view -> {
+        });
+        card.setPadding(dp(20), dp(18), dp(20), dp(20));
+        FrameLayout.LayoutParams cardParams = new FrameLayout.LayoutParams(
+                Math.min(dp(370), getResources().getDisplayMetrics().widthPixels - dp(32)),
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        cardParams.gravity = Gravity.CENTER;
+        loginAlertOverlay.addView(card, cardParams);
+
+        TextView title = text(labels.title, 21, palette.text, Typeface.BOLD);
+        card.addView(title, matchWrap());
+
+        TextView message = text(labels.message(event, eventCount), 15, palette.text, Typeface.NORMAL);
+        message.setPadding(0, dp(10), 0, dp(16));
+        card.addView(message, matchWrap());
+
+        Button devices = ghostButton(labels.manageDevices);
+        devices.setOnClickListener(view -> {
+            closeLoginAlert();
+            openWeb(ChatApi.DEVICES_URL, labels.manageDevices);
+        });
+        card.addView(devices, matchWrap());
+
+        Button understood = primaryButton(labels.understood);
+        understood.setOnClickListener(view -> closeLoginAlert());
+        card.addView(understood, topMargin(matchWrap(), dp(8)));
+    }
+
+    private void closeLoginAlert() {
+        if (loginAlertOverlay != null && rootFrame != null) {
+            rootFrame.removeView(loginAlertOverlay);
+            loginAlertOverlay = null;
+        }
+    }
+
+    private void closeScreenOverlays() {
+        closeLoginAlert();
+        closeUpdateDialog();
+        closeImageViewer();
+        closeMenu();
     }
 
     private byte[] compressImage(Uri uri) throws Exception {
@@ -2079,7 +2185,7 @@ public class MainActivity extends Activity {
             return allMessagesPrefix + user;
         }
 
-        String asAccount(String user) {
+        String writingAs(String user) {
             return asPrefix + user;
         }
 
@@ -2166,7 +2272,7 @@ public class MainActivity extends Activity {
                         " yet.",
                         "Active: ",
                         "All messages - ",
-                        "as "
+                        "You are writing as "
                 );
             }
             if ("fr".equals(code)) {
@@ -2215,7 +2321,7 @@ public class MainActivity extends Activity {
                         ".",
                         "Actif : ",
                         "Tous les messages - ",
-                        "en tant que "
+                        "Vous écrivez en tant que "
                 );
             }
             if ("ru".equals(code)) {
@@ -2264,7 +2370,7 @@ public class MainActivity extends Activity {
                         ".",
                         "Активен: ",
                         "Все сообщения - ",
-                        "как "
+                        "Вы пишете как "
                 );
             }
             if ("uk".equals(code)) {
@@ -2313,7 +2419,7 @@ public class MainActivity extends Activity {
                         ".",
                         "Активний: ",
                         "Усі повідомлення - ",
-                        "як "
+                        "Ви пишете як "
                 );
             }
             if ("it".equals(code)) {
@@ -2362,7 +2468,7 @@ public class MainActivity extends Activity {
                         ".",
                         "Attivo: ",
                         "Tutti i messaggi - ",
-                        "come "
+                        "Stai scrivendo come "
                 );
             }
             return new AppText(
@@ -2410,8 +2516,74 @@ public class MainActivity extends Activity {
                     ".",
                     "Aktiv: ",
                     "Alle Nachrichten - ",
-                    "als "
+                    "Du schreibst als "
             );
+        }
+    }
+
+    private static final class LoginAlertText {
+        final String title;
+        final String appPrefix;
+        final String webPrefix;
+        final String advice;
+        final String manageDevices;
+        final String understood;
+        final String moreEvents;
+
+        LoginAlertText(String title, String appPrefix, String webPrefix, String advice,
+                       String manageDevices, String understood, String moreEvents) {
+            this.title = title;
+            this.appPrefix = appPrefix;
+            this.webPrefix = webPrefix;
+            this.advice = advice;
+            this.manageDevices = manageDevices;
+            this.understood = understood;
+            this.moreEvents = moreEvents;
+        }
+
+        String message(ChatApi.LoginEvent event, int count) {
+            String source = "app".equals(event.channel) ? appPrefix : webPrefix;
+            String device = LoginEventPolicy.displayDevice(event.deviceName);
+            StringBuilder value = new StringBuilder(source).append(device);
+            if (event.createdAt != null && !event.createdAt.isEmpty()) {
+                value.append("\n").append(event.createdAt).append(" UTC");
+            }
+            if (count > 1) {
+                value.append("\n").append(count - 1).append(" ").append(moreEvents);
+            }
+            value.append("\n\n").append(advice);
+            return value.toString();
+        }
+
+        static LoginAlertText from(String language) {
+            if ("de".equals(language)) {
+                return new LoginAlertText("Neue Anmeldung", "Android-App: ", "Webchat: ",
+                        "Wenn du das nicht warst, beende unbekannte App-Zugriffe und wende dich an den Betreiber.",
+                        "App-Geräte verwalten", "Verstanden", "weitere Anmeldungen");
+            }
+            if ("fr".equals(language)) {
+                return new LoginAlertText("Nouvelle connexion", "Application Android : ", "Chat web : ",
+                        "Si ce n’était pas vous, révoquez les accès inconnus et contactez l’opérateur.",
+                        "Gérer les appareils", "Compris", "autres connexions");
+            }
+            if ("ru".equals(language)) {
+                return new LoginAlertText("Новый вход", "Android-приложение: ", "Веб-чат: ",
+                        "Если это были не вы, отзовите неизвестные доступы и свяжитесь с оператором.",
+                        "Управление устройствами", "Понятно", "других входа");
+            }
+            if ("uk".equals(language)) {
+                return new LoginAlertText("Новий вхід", "Android-застосунок: ", "Вебчат: ",
+                        "Якщо це були не ви, відкличте невідомі доступи та зверніться до оператора.",
+                        "Керувати пристроями", "Зрозуміло", "інших входів");
+            }
+            if ("it".equals(language)) {
+                return new LoginAlertText("Nuovo accesso", "App Android: ", "Chat web: ",
+                        "Se non eri tu, revoca gli accessi sconosciuti e contatta il gestore.",
+                        "Gestisci dispositivi", "Ho capito", "altri accessi");
+            }
+            return new LoginAlertText("New sign-in", "Android app: ", "Web chat: ",
+                    "If this was not you, revoke unknown app access and contact the operator.",
+                    "Manage app devices", "Understood", "other sign-ins");
         }
     }
 

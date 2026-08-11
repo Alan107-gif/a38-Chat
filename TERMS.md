@@ -1,8 +1,8 @@
 # Terms of Service and Privacy Principles
 
-**Last updated: August 9, 2026**
+**Last updated: August 11, 2026**
 
-These terms apply to the a38-Chat Android app and the related web chat at [corecosmetic.de/chat](https://www.corecosmetic.de/chat/). The service operator is the provider named in the legal notice on corecosmetic.de.
+These terms apply to the a38-Chat Android app and the related web chat at [chat.contentclassic.com/chat](https://chat.contentclassic.com/chat/). The service operator is the provider named in the legal notice on corecosmetic.de.
 
 By installing or using the a38-Chat app, you agree to these terms.
 
@@ -12,11 +12,13 @@ a38-Chat is an independent communication service for exchanging text messages an
 
 ## 2. Accounts and Access Data
 
-Users are responsible for keeping their access data confidential and for activity under their accounts. The app does not store the password. It stores an app token instead. This token is protected on the Android device with a key from the Android Keystore. Logging out ends the associated app session.
+Users are responsible for keeping their access data confidential and for activity under their accounts. The app does not store the password. It stores an app token instead. This token is protected on the Android device with a key from the Android Keystore. Logging out or revoking a device in the web chat ends the associated app session.
 
 ## 3. Storage and Use of Data
 
-Messages, image messages, the usernames involved, and necessary technical metadata are stored on the a38-Chat server so that messages can be delivered and shown later in the app or web chat. Account data and session information are processed for sign-in, account management, and protection of the service.
+Messages, image messages, the usernames involved, and necessary technical metadata are stored on the a38-Chat server so that messages can be delivered and shown later in the app or web chat. Account data and session information are processed for sign-in, account management, and protection of the service. App device labels and the time and channel of a sign-in are used for device management and sign-in warnings.
+
+Like other web services, the server may create standard access logs containing connection data such as IP address, time, requested path, and user agent for reliable and secure operation. These logs are separate from chat messages.
 
 Chat content is not sold, used for advertising or profiling, or voluntarily disclosed or shown to third parties. It is used solely to provide and operate the chat service.
 
