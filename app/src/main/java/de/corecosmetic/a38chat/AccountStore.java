@@ -29,6 +29,7 @@ final class AccountStore {
     private static final String KEY_NOTIFICATIONS_ENABLED = "notifications_enabled";
     private static final String KEY_NOTIFICATION_PERMISSION_ASKED = "notification_permission_asked";
     private static final String KEY_NOTIFICATION_TIMEOUT = "notification_timeout";
+    private static final String KEY_LOGIN_EVENT_CURSOR_PREFIX = "login_event_cursor_";
     private static final String KEY_ALIAS = "a38_chat_accounts_v1";
     static final long DEFAULT_NOTIFICATION_TIMEOUT = 5 * 60 * 1000L;
 
@@ -87,6 +88,7 @@ final class AccountStore {
             }
         }
         saveAccounts(accounts);
+        prefs.edit().remove(loginEventCursorKey(username)).apply();
 
         String active = getActiveUsername();
         if (username.equals(active)) {
@@ -158,6 +160,21 @@ final class AccountStore {
 
     void setNotificationTimeout(long timeout) {
         prefs.edit().putLong(KEY_NOTIFICATION_TIMEOUT, Math.max(0L, timeout)).apply();
+    }
+
+    long loginEventCursor(String username) {
+        return prefs.getLong(loginEventCursorKey(username), -1L);
+    }
+
+    void setLoginEventCursor(String username, long eventId) {
+        prefs.edit().putLong(loginEventCursorKey(username), Math.max(0L, eventId)).apply();
+    }
+
+    private String loginEventCursorKey(String username) {
+        return KEY_LOGIN_EVENT_CURSOR_PREFIX + Base64.encodeToString(
+                (username == null ? "" : username).getBytes(StandardCharsets.UTF_8),
+                Base64.NO_WRAP | Base64.URL_SAFE
+        );
     }
 
     private void saveAccounts(List<Account> accounts) {

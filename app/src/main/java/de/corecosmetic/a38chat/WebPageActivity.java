@@ -219,7 +219,7 @@ public class WebPageActivity extends Activity {
     private boolean isTrustedHost(Uri uri) {
         String host = uri.getHost();
         return "https".equalsIgnoreCase(uri.getScheme())
-                && ("www.corecosmetic.de".equalsIgnoreCase(host) || "corecosmetic.de".equalsIgnoreCase(host));
+                && "chat.contentclassic.com".equalsIgnoreCase(host);
     }
 
     private GradientDrawable round(int color, int radius, int border) {

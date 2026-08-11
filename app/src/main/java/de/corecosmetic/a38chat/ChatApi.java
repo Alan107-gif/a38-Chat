@@ -22,11 +22,12 @@ import java.util.List;
 import java.util.UUID;
 
 final class ChatApi {
-    static final String CHAT_URL = "https://www.corecosmetic.de/chat/";
+    static final String CHAT_URL = "https://chat.contentclassic.com/chat/";
     static final String API_URL = CHAT_URL + "api.php";
     static final String BLOG_URL = CHAT_URL + "blog.html";
     static final String AUTH_URL = CHAT_URL + "auth.php";
     static final String SECURITY_URL = CHAT_URL + "security.php";
+    static final String DEVICES_URL = CHAT_URL + "devices.php";
 
     private ChatApi() {
     }
@@ -36,7 +37,11 @@ final class ChatApi {
                 + "&" + formField("password", password)
                 + "&" + formField("device_name", deviceName);
         JSONObject json = postForm(API_URL + "?action=login", null, body);
-        return new LoginResult(json.getString("username"), json.getString("token"));
+        return new LoginResult(
+                json.getString("username"),
+                json.getString("token"),
+                json.optLong("login_event_id", 0L)
+        );
     }
 
     static void logout(String token) throws IOException, JSONException, ApiException {
@@ -91,6 +96,24 @@ final class ChatApi {
         }
 
         return new MessagesResult(messages, json.optInt("last_id", since));
+    }
+
+    static LoginEventsResult loginEvents(String token, long since) throws IOException, JSONException, ApiException {
+        JSONObject json = getJson(API_URL + "?action=login_events&since=" + Math.max(0L, since), token);
+        JSONArray array = json.optJSONArray("events");
+        ArrayList<LoginEvent> events = new ArrayList<>();
+        if (array != null) {
+            for (int i = 0; i < array.length(); i++) {
+                JSONObject item = array.getJSONObject(i);
+                events.add(new LoginEvent(
+                        item.optLong("id", 0L),
+                        item.optString("channel", "web"),
+                        item.optString("device_name", ""),
+                        item.optString("created_at", "")
+                ));
+            }
+        }
+        return new LoginEventsResult(events, json.optLong("last_id", since));
     }
 
     static int send(String token, String recipient, String message, byte[] webpImage) throws IOException, JSONException, ApiException {
@@ -176,7 +199,7 @@ final class ChatApi {
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(20000);
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "a38-Chat/1.0.2");
+        connection.setRequestProperty("User-Agent", "a38-Chat/1.1.3");
         if (token != null && !token.isEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -218,10 +241,36 @@ final class ChatApi {
     static final class LoginResult {
         final String username;
         final String token;
+        final long loginEventId;
 
-        LoginResult(String username, String token) {
+        LoginResult(String username, String token, long loginEventId) {
             this.username = username;
             this.token = token;
+            this.loginEventId = loginEventId;
+        }
+    }
+
+    static final class LoginEvent {
+        final long id;
+        final String channel;
+        final String deviceName;
+        final String createdAt;
+
+        LoginEvent(long id, String channel, String deviceName, String createdAt) {
+            this.id = id;
+            this.channel = channel;
+            this.deviceName = deviceName;
+            this.createdAt = createdAt;
+        }
+    }
+
+    static final class LoginEventsResult {
+        final List<LoginEvent> events;
+        final long lastId;
+
+        LoginEventsResult(List<LoginEvent> events, long lastId) {
+            this.events = events;
+            this.lastId = lastId;
         }
     }
 
