@@ -1,5 +1,5 @@
 {
-  "versionCode": 6,
+  "versionCode": 7,
   "versionName": "1.1.3",
   "title": {
     "de": "Update verfügbar",
@@ -10,14 +10,14 @@
     "it": "Aggiornamento disponibile"
   },
   "notes": {
-    "de": "Behoben: Beim Antippen einer Nachricht wird der richtige Gesprächspartner sofort als Empfänger gewählt. Neu sind Anmeldewarnungen, App-Geräteverwaltung und Bild-Zoom; die dauerhafte Statusbenachrichtigung wurde entfernt.",
-    "en": "Fixed: Tapping a message now selects the correct conversation partner as recipient immediately. New sign-in warnings, app device management and image zoom were added; the permanent status notification was removed.",
-    "fr": "Correction : toucher un message sélectionne immédiatement le bon interlocuteur comme destinataire. Ajout des alertes de connexion, de la gestion des appareils et du zoom des images ; la notification permanente a été supprimée.",
-    "ru": "Исправлено: нажатие на сообщение сразу выбирает нужного собеседника как получателя. Добавлены предупреждения о входе, управление устройствами и масштабирование изображений; постоянное уведомление удалено.",
-    "uk": "Виправлено: натискання повідомлення одразу вибирає потрібного співрозмовника як одержувача. Додано попередження про вхід, керування пристроями й масштабування зображень; постійне сповіщення видалено.",
-    "it": "Correzione: toccando un messaggio viene selezionato subito il destinatario corretto. Sono stati aggiunti avvisi di accesso, gestione dei dispositivi e zoom delle immagini; la notifica permanente è stata rimossa."
+    "de": "Dringender Stabilitätsfix: Der Absturz direkt nach der Anmeldung oder beim Öffnen eines angemeldeten Kontos ist behoben. Außerdem: korrekte Empfängerwahl, Anmeldewarnungen, App-Geräteverwaltung und Bild-Zoom; die dauerhafte Statusbenachrichtigung wurde entfernt.",
+    "en": "Urgent stability fix: The crash immediately after sign-in or when opening a signed-in account has been fixed. Also included: correct recipient selection, sign-in warnings, app device management and image zoom; the permanent status notification was removed.",
+    "fr": "Correctif urgent de stabilité : le plantage juste après la connexion ou à l’ouverture d’un compte connecté est corrigé. Sont également inclus : choix correct du destinataire, alertes de connexion, gestion des appareils et zoom des images ; la notification permanente a été supprimée.",
+    "ru": "Срочное исправление стабильности: устранён сбой сразу после входа или при открытии уже авторизованной учётной записи. Также исправлен выбор получателя, добавлены предупреждения о входе, управление устройствами и масштабирование изображений; постоянное уведомление удалено.",
+    "uk": "Термінове виправлення стабільності: усунено збій одразу після входу або під час відкриття вже авторизованого облікового запису. Також виправлено вибір одержувача, додано попередження про вхід, керування пристроями й масштабування зображень; постійне сповіщення видалено.",
+    "it": "Correzione urgente di stabilità: risolto l’arresto anomalo subito dopo l’accesso o all’apertura di un account già connesso. Inclusi anche la selezione corretta del destinatario, gli avvisi di accesso, la gestione dei dispositivi e lo zoom delle immagini; la notifica permanente è stata rimossa."
   },
   "repoUrl": "https://github.com/Alan107-gif/a38-Chat",
   "apkUrl": "https://raw.githubusercontent.com/Alan107-gif/a38-Chat/main/a38-Chat.apk",
-  "sha256": "6d0f679d77084657021666c7f254b20fdb13344fb21ddf62f4775967998d7ad1"
+  "sha256": "14da00196a81849f1628d2faadff23e6194bee3601d7ab5badf9a45fac4b6143"
 }

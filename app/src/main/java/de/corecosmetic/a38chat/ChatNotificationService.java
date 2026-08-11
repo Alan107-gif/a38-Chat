@@ -5,16 +5,17 @@ import android.app.Notification;
 import android.app.NotificationChannel;
 import android.app.NotificationManager;
 import android.app.PendingIntent;
+import android.app.job.JobInfo;
+import android.app.job.JobParameters;
+import android.app.job.JobScheduler;
+import android.app.job.JobService;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
 import android.content.pm.PackageManager;
 import android.os.Build;
-import android.app.job.JobInfo;
-import android.app.job.JobParameters;
-import android.app.job.JobScheduler;
-import android.app.job.JobService;
+import android.util.Log;
 
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,6 +24,7 @@ import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
 public final class ChatNotificationService extends JobService {
+    private static final String TAG = "A38NotificationJob";
     private static final String CHANNEL_MESSAGES = "chat_messages";
     private static final String LEGACY_CHANNEL_SERVICE = "chat_monitoring";
     private static final String CURSOR_PREFS = "a38_chat_notification_cursors";
@@ -46,20 +48,30 @@ public final class ChatNotificationService extends JobService {
             return;
         }
 
-        ComponentName component = new ComponentName(context, ChatNotificationService.class);
-        JobInfo periodic = new JobInfo.Builder(JOB_PERIODIC, component)
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setPeriodic(PERIODIC_INTERVAL_MS)
-                .setPersisted(true)
-                .build();
-        scheduler.schedule(periodic);
+        try {
+            ComponentName component = new ComponentName(context, ChatNotificationService.class);
+            JobInfo periodic = new JobInfo.Builder(JOB_PERIODIC, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setPeriodic(PERIODIC_INTERVAL_MS)
+                    .setPersisted(true)
+                    .build();
+            JobInfo immediate = new JobInfo.Builder(JOB_IMMEDIATE, component)
+                    .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
+                    .setMinimumLatency(1_000L)
+                    .setOverrideDeadline(5_000L)
+                    .build();
 
-        JobInfo immediate = new JobInfo.Builder(JOB_IMMEDIATE, component)
-                .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
-                .setMinimumLatency(1_000L)
-                .setOverrideDeadline(5_000L)
-                .build();
-        scheduler.schedule(immediate);
+            int periodicResult = scheduler.schedule(periodic);
+            int immediateResult = scheduler.schedule(immediate);
+            if (periodicResult == JobScheduler.RESULT_FAILURE
+                    || immediateResult == JobScheduler.RESULT_FAILURE) {
+                Log.w(TAG, "Android rejected a notification job schedule request");
+            }
+        } catch (RuntimeException exception) {
+            scheduler.cancel(JOB_PERIODIC);
+            scheduler.cancel(JOB_IMMEDIATE);
+            Log.e(TAG, "Unable to schedule notification jobs", exception);
+        }
     }
 
     static void stop(Context context) {
@@ -143,6 +155,9 @@ public final class ChatNotificationService extends JobService {
         }
 
         NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
         NotificationText text = NotificationText.from(store.getLanguage());
         long timeout = store.notificationTimeout();
         for (Map.Entry<String, ChatApi.Message> entry : latestBySender.entrySet()) {
@@ -193,6 +208,9 @@ public final class ChatNotificationService extends JobService {
 
     private void createMessageChannel() {
         NotificationManager manager = getSystemService(NotificationManager.class);
+        if (manager == null) {
+            return;
+        }
         NotificationText labels = NotificationText.from(new AccountStore(this).getLanguage());
         NotificationChannel messages = new NotificationChannel(
                 CHANNEL_MESSAGES,
