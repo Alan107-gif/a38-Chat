@@ -6,7 +6,6 @@ import android.graphics.RectF;
 import android.graphics.drawable.Drawable;
 import android.util.AttributeSet;
 import android.view.MotionEvent;
-import android.view.ScaleGestureDetector;
 import android.widget.ImageView;
 
 public final class ZoomImageView extends ImageView {
@@ -14,14 +13,15 @@ public final class ZoomImageView extends ImageView {
     private static final float TAP_SLOP = 18f;
 
     private final Matrix imageTransform = new Matrix();
-    private final ScaleGestureDetector scaleDetector;
     private float fittedScale = 1f;
     private float currentScale = 1f;
+    private float lastPinchDistance;
     private float lastX;
     private float lastY;
     private float downX;
     private float downY;
     private boolean moved;
+    private boolean pinching;
     private Runnable outsideTapListener;
 
     public ZoomImageView(Context context) {
@@ -31,23 +31,6 @@ public final class ZoomImageView extends ImageView {
     public ZoomImageView(Context context, AttributeSet attrs) {
         super(context, attrs);
         setScaleType(ScaleType.MATRIX);
-        scaleDetector = new ScaleGestureDetector(context, new ScaleGestureDetector.SimpleOnScaleGestureListener() {
-            @Override
-            public boolean onScale(ScaleGestureDetector detector) {
-                Drawable drawable = getDrawable();
-                if (drawable == null) {
-                    return false;
-                }
-                float targetScale = Math.max(fittedScale, Math.min(fittedScale * MAX_ZOOM_MULTIPLIER, currentScale * detector.getScaleFactor()));
-                float factor = targetScale / currentScale;
-                imageTransform.postScale(factor, factor, detector.getFocusX(), detector.getFocusY());
-                currentScale = targetScale;
-                constrainImage();
-                setImageMatrix(imageTransform);
-                moved = true;
-                return true;
-            }
-        });
     }
 
     void setOutsideTapListener(Runnable listener) {
@@ -68,15 +51,35 @@ public final class ZoomImageView extends ImageView {
 
     @Override
     public boolean onTouchEvent(MotionEvent event) {
-        scaleDetector.onTouchEvent(event);
         switch (event.getActionMasked()) {
             case MotionEvent.ACTION_DOWN:
                 downX = lastX = event.getX();
                 downY = lastY = event.getY();
                 moved = false;
+                pinching = false;
+                lastPinchDistance = 0f;
+                return true;
+            case MotionEvent.ACTION_POINTER_DOWN:
+                if (event.getPointerCount() >= 2) {
+                    lastPinchDistance = pointerDistance(event);
+                    pinching = lastPinchDistance > 0f;
+                    moved = true;
+                }
                 return true;
             case MotionEvent.ACTION_MOVE:
-                if (event.getPointerCount() == 1 && !scaleDetector.isInProgress() && currentScale > fittedScale) {
+                if (event.getPointerCount() >= 2) {
+                    float distance = pointerDistance(event);
+                    if (pinching && lastPinchDistance > 0f && distance > 0f) {
+                        float focusX = (event.getX(0) + event.getX(1)) / 2f;
+                        float focusY = (event.getY(0) + event.getY(1)) / 2f;
+                        scaleImage(distance / lastPinchDistance, focusX, focusY);
+                    }
+                    lastPinchDistance = distance;
+                    pinching = distance > 0f;
+                    moved = true;
+                    return true;
+                }
+                if (!pinching && event.getPointerCount() == 1 && currentScale > fittedScale) {
                     float dx = event.getX() - lastX;
                     float dy = event.getY() - lastY;
                     if (Math.abs(event.getX() - downX) > TAP_SLOP || Math.abs(event.getY() - downY) > TAP_SLOP) {
@@ -89,20 +92,61 @@ public final class ZoomImageView extends ImageView {
                 lastX = event.getX();
                 lastY = event.getY();
                 return true;
+            case MotionEvent.ACTION_POINTER_UP:
+                if (event.getPointerCount() - 1 < 2) {
+                    int remainingIndex = event.getActionIndex() == 0 ? 1 : 0;
+                    if (remainingIndex < event.getPointerCount()) {
+                        lastX = event.getX(remainingIndex);
+                        lastY = event.getY(remainingIndex);
+                    }
+                    pinching = false;
+                    lastPinchDistance = 0f;
+                }
+                return true;
             case MotionEvent.ACTION_UP:
-                if (!moved && !scaleDetector.isInProgress()) {
+                if (!moved && !pinching) {
                     RectF displayed = displayedImageBounds();
                     if (displayed != null && !displayed.contains(event.getX(), event.getY()) && outsideTapListener != null) {
                         outsideTapListener.run();
                     }
                     performClick();
                 }
+                pinching = false;
+                lastPinchDistance = 0f;
                 return true;
             case MotionEvent.ACTION_CANCEL:
+                pinching = false;
+                lastPinchDistance = 0f;
                 return true;
             default:
                 return true;
         }
+    }
+
+    private void scaleImage(float requestedFactor, float focusX, float focusY) {
+        if (getDrawable() == null || requestedFactor <= 0f) {
+            return;
+        }
+        float targetScale = Math.max(
+                fittedScale,
+                Math.min(fittedScale * MAX_ZOOM_MULTIPLIER, currentScale * requestedFactor)
+        );
+        float factor = targetScale / currentScale;
+        if (Math.abs(factor - 1f) < 0.0001f) {
+            return;
+        }
+        imageTransform.postScale(factor, factor, focusX, focusY);
+        currentScale = targetScale;
+        constrainImage();
+        setImageMatrix(imageTransform);
+        moved = true;
+    }
+
+    private static float pointerDistance(MotionEvent event) {
+        if (event.getPointerCount() < 2) {
+            return 0f;
+        }
+        return (float)Math.hypot(event.getX(0) - event.getX(1), event.getY(0) - event.getY(1));
     }
 
     @Override

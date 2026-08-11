@@ -18,6 +18,7 @@ import android.os.Looper;
 import android.provider.Settings;
 import android.text.TextUtils;
 import android.text.InputType;
+import android.text.method.PasswordTransformationMethod;
 import android.util.LruCache;
 import android.view.Gravity;
 import android.view.View;
@@ -327,6 +328,7 @@ public class MainActivity extends Activity {
         EditText password = input(copy.password);
         password.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_PASSWORD);
         password.setSingleLine(true);
+        password.setTransformationMethod(PasswordTransformationMethod.getInstance());
         password.setAutofillHints(View.AUTOFILL_HINT_PASSWORD);
         password.setImeOptions(EditorInfo.IME_ACTION_DONE);
         panel.addView(label(copy.password));
