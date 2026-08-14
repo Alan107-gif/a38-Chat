@@ -34,9 +34,11 @@ final class AccountStore {
     static final long DEFAULT_NOTIFICATION_TIMEOUT = 5 * 60 * 1000L;
 
     private final SharedPreferences prefs;
+    private final MessageCache messageCache;
 
     AccountStore(Context context) {
         prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE);
+        messageCache = new MessageCache(context);
     }
 
     List<Account> loadAccounts() {
@@ -89,6 +91,7 @@ final class AccountStore {
         }
         saveAccounts(accounts);
         prefs.edit().remove(loginEventCursorKey(username)).apply();
+        messageCache.clear(username);
 
         String active = getActiveUsername();
         if (username.equals(active)) {

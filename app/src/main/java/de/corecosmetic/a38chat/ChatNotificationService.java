@@ -131,7 +131,7 @@ public final class ChatNotificationService extends JobService {
             boolean initialized = cursors.getBoolean(key + "_initialized", false);
             int lastId = cursors.getInt(key + "_last_id", 0);
             try {
-                ChatApi.MessagesResult result = ChatApi.messages(account.token, lastId, "");
+                ChatApi.MessagesResult result = ChatApi.messages(account.token, account.username, lastId, "");
                 int nextId = Math.max(lastId, result.lastId);
                 cursors.edit()
                         .putBoolean(key + "_initialized", true)

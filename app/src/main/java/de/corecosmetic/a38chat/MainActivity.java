@@ -2,6 +2,7 @@ package de.corecosmetic.a38chat;
 
 import android.Manifest;
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.Intent;
 import android.content.pm.PackageManager;
 import android.graphics.Bitmap;
@@ -9,6 +10,7 @@ import android.graphics.BitmapFactory;
 import android.graphics.Color;
 import android.graphics.Matrix;
 import android.graphics.Typeface;
+import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.GradientDrawable;
 import android.net.Uri;
 import android.os.Build;
@@ -16,6 +18,7 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.provider.Settings;
+import android.text.InputFilter;
 import android.text.TextUtils;
 import android.text.InputType;
 import android.text.method.PasswordTransformationMethod;
@@ -33,6 +36,7 @@ import android.widget.FrameLayout;
 import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
+import android.widget.SeekBar;
 import android.widget.Switch;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -55,6 +59,7 @@ public class MainActivity extends Activity {
     static final String EXTRA_ACCOUNT = "notification_account";
     static final String EXTRA_PEER = "notification_peer";
     private static final int REQ_IMAGE = 7001;
+    private static final int REQ_BULK_IMAGE = 7004;
     private static final int REQ_INSTALL_PERMISSION = 7002;
     private static final int REQ_NOTIFICATIONS = 7003;
     private static final int IMAGE_LIMIT_BYTES = 120 * 1024;
@@ -68,17 +73,29 @@ public class MainActivity extends Activity {
     private final ExecutorService imageExecutor = Executors.newFixedThreadPool(2);
     private final ExecutorService updateExecutor = Executors.newSingleThreadExecutor();
     private final List<ChatApi.Message> visibleMessages = new ArrayList<>();
+    private final List<ChatApi.Message> cachedMessages = new ArrayList<>();
     private final Set<Integer> visibleMessageIds = new HashSet<>();
     private final Set<Integer> loadingImageIds = new HashSet<>();
     private final Map<Integer, List<ImageView>> pendingImageViews = new HashMap<>();
+    private final Set<String> loadingProfileUsers = new HashSet<>();
+    private final Set<String> missingProfileUsers = new HashSet<>();
+    private final Map<String, List<ImageView>> pendingProfileViews = new HashMap<>();
     private final LruCache<Integer, Bitmap> imageCache = new LruCache<Integer, Bitmap>(24 * 1024) {
         @Override
         protected int sizeOf(Integer key, Bitmap bitmap) {
             return Math.max(1, bitmap.getByteCount() / 1024);
         }
     };
+    private final LruCache<String, Bitmap> profileImageCache = new LruCache<String, Bitmap>(512) {
+        @Override
+        protected int sizeOf(String key, Bitmap bitmap) {
+            return Math.max(1, bitmap.getByteCount() / 1024);
+        }
+    };
 
     private AccountStore accountStore;
+    private MessageCache messageCache;
+    private DebugSettings debugSettings;
     private AccountStore.Account currentAccount;
     private Palette palette;
     private AppText copy;
@@ -89,6 +106,8 @@ public class MainActivity extends Activity {
     private EditText messageInput;
     private TextView titleView;
     private TextView subtitleView;
+    private ImageView conversationAvatar;
+    private Button refreshButton;
     private TextView emptyView;
     private TextView imageStatusView;
     private FrameLayout menuOverlay;
@@ -96,6 +115,8 @@ public class MainActivity extends Activity {
     private FrameLayout updateOverlay;
     private FrameLayout loginAlertOverlay;
     private Uri selectedImageUri;
+    private Uri selectedBulkImageUri;
+    private TextView bulkImageStatusView;
     private File pendingUpdateFile;
     private String selectedPeer = "";
     private String draftRecipient = "";
@@ -104,6 +125,7 @@ public class MainActivity extends Activity {
     private int conversationGeneration = 0;
     private boolean loadingMessages = false;
     private boolean messageReloadPending = false;
+    private boolean forceMessageReloadPending = false;
     private boolean pendingMessageErrors = false;
     private boolean loadingContacts = false;
     private boolean loadingLoginEvents = false;
@@ -112,6 +134,7 @@ public class MainActivity extends Activity {
     private boolean chatVisible = false;
     private boolean activityStarted = false;
     private boolean updateChecked = false;
+    private final DebugActivationCounter debugActivationCounter = new DebugActivationCounter();
     private List<ChatApi.Contact> contacts = new ArrayList<>();
 
     private final Runnable pollRunnable = new Runnable() {
@@ -131,6 +154,8 @@ public class MainActivity extends Activity {
         super.onCreate(savedInstanceState);
         getWindow().setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE);
         accountStore = new AccountStore(this);
+        messageCache = new MessageCache(this);
+        debugSettings = new DebugSettings(this);
         palette = Palette.from(accountStore.getTheme());
         copy = AppText.from(accountStore.getLanguage());
         applySystemBars();
@@ -202,8 +227,12 @@ public class MainActivity extends Activity {
         imageExecutor.shutdownNow();
         updateExecutor.shutdownNow();
         imageCache.evictAll();
+        profileImageCache.evictAll();
         loadingImageIds.clear();
         pendingImageViews.clear();
+        loadingProfileUsers.clear();
+        missingProfileUsers.clear();
+        pendingProfileViews.clear();
         super.onDestroy();
     }
 
@@ -265,6 +294,20 @@ public class MainActivity extends Activity {
             }
             if (imageStatusView != null) {
                 imageStatusView.setText(copy.imageSelected);
+            }
+            return;
+        }
+        if (requestCode == REQ_BULK_IMAGE && resultCode == RESULT_OK && data != null && data.getData() != null) {
+            selectedBulkImageUri = data.getData();
+            try {
+                getContentResolver().takePersistableUriPermission(
+                        selectedBulkImageUri,
+                        Intent.FLAG_GRANT_READ_URI_PERMISSION
+                );
+            } catch (Exception ignored) {
+            }
+            if (bulkImageStatusView != null) {
+                bulkImageStatusView.setText(copy.imageSelected);
             }
         }
     }
@@ -481,6 +524,12 @@ public class MainActivity extends Activity {
         menu.setOnClickListener(view -> openMenu());
         bar.addView(menu, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
+        String headerUsername = selectedPeer.isEmpty() ? currentAccount.username : selectedPeer;
+        conversationAvatar = profileAvatar(headerUsername, currentAccount);
+        LinearLayout.LayoutParams conversationAvatarParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        conversationAvatarParams.leftMargin = dp(8);
+        bar.addView(conversationAvatar, conversationAvatarParams);
+
         LinearLayout titleBlock = new LinearLayout(this);
         titleBlock.setOrientation(LinearLayout.VERTICAL);
         titleBlock.setPadding(dp(10), 0, dp(8), 0);
@@ -494,14 +543,24 @@ public class MainActivity extends Activity {
         titleBlock.addView(subtitleView, matchWrap());
         bar.addView(titleBlock, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
 
-        Button refresh = iconButton("\u21BB");
-        refresh.setTextSize(21);
-        refresh.setContentDescription(copy.reloadDescription());
-        refresh.setOnClickListener(view -> {
+        refreshButton = iconButton("\u21BB");
+        refreshButton.setTextSize(21);
+        refreshButton.setContentDescription(copy.reloadDescription());
+        refreshButton.setOnClickListener(view -> {
+            refreshButton.setEnabled(false);
+            refreshButton.setText("…");
+            profileImageCache.evictAll();
+            missingProfileUsers.clear();
+            renderMessages();
+            String refreshHeaderUsername = selectedPeer.isEmpty() ? currentAccount.username : selectedPeer;
+            if (conversationAvatar != null) {
+                prepareProfileAvatar(conversationAvatar, refreshHeaderUsername);
+                loadProfileImage(currentAccount, refreshHeaderUsername, conversationAvatar);
+            }
             loadContacts(true);
-            loadMessages(true, true);
+            loadMessages(true, true, true);
         });
-        bar.addView(refresh, new LinearLayout.LayoutParams(dp(48), dp(48)));
+        bar.addView(refreshButton, new LinearLayout.LayoutParams(dp(48), dp(48)));
 
         return bar;
     }
@@ -559,11 +618,15 @@ public class MainActivity extends Activity {
     }
 
     private void chooseImage() {
+        chooseImage(REQ_IMAGE);
+    }
+
+    private void chooseImage(int requestCode) {
         Intent intent = new Intent(Intent.ACTION_OPEN_DOCUMENT);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.setType("image/*");
         intent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION | Intent.FLAG_GRANT_PERSISTABLE_URI_PERMISSION);
-        startActivityForResult(intent, REQ_IMAGE);
+        startActivityForResult(intent, requestCode);
     }
 
     private void sendMessage(Button sendButton) {
@@ -621,55 +684,74 @@ public class MainActivity extends Activity {
     }
 
     private void loadMessages(boolean reset, boolean showErrors) {
+        loadMessages(reset, showErrors, false);
+    }
+
+    private void loadMessages(boolean reset, boolean showErrors, boolean forceFresh) {
         if (currentAccount == null) {
             return;
-        }
-
-        if (reset) {
-            conversationGeneration++;
-            visibleMessages.clear();
-            visibleMessageIds.clear();
-            lastMessageId = 0;
-            renderMessages();
         }
 
         if (loadingMessages) {
             if (reset) {
                 messageReloadPending = true;
                 pendingMessageErrors = pendingMessageErrors || showErrors;
+                forceMessageReloadPending = forceMessageReloadPending || forceFresh;
             }
             return;
         }
 
+        if (forceFresh) {
+            messageCache.clear(currentAccount.username);
+            cachedMessages.clear();
+            lastMessageId = 0;
+        }
+
+        if (reset) {
+            conversationGeneration++;
+            restoreCachedMessages(currentAccount.username);
+            rebuildVisibleMessagesFromCache();
+            renderMessages();
+            scrollMessagesToBottom();
+        }
+
         loadingMessages = true;
-        int since = reset ? 0 : lastMessageId;
+        int since = lastMessageId;
         String peer = selectedPeer;
         AccountStore.Account account = currentAccount;
         int generation = conversationGeneration;
 
         runTask(
-                () -> ChatApi.messages(account.token, since, peer),
+                () -> ChatApi.messages(account.token, account.username, since, ""),
                 result -> {
                     loadingMessages = false;
-                    if (chatVisible
-                            && accountMatches(account)
-                            && generation == conversationGeneration
-                            && peer.equals(selectedPeer)) {
-                        if (reset) {
-                            visibleMessages.clear();
-                            visibleMessageIds.clear();
-                            addVisibleMessages(result.messages);
-                            renderMessages();
-                            scrollMessagesToBottom();
-                        } else {
+                    if (accountMatches(account)) {
+                        if (!result.messages.isEmpty()) {
+                            List<ChatApi.Message> merged = messageCache.mergeAndSave(
+                                    account.username,
+                                    cachedMessages,
+                                    result.messages
+                            );
+                            cachedMessages.clear();
+                            cachedMessages.addAll(merged);
+                        }
+                        lastMessageId = Math.max(lastMessageId, Math.max(result.lastId, maximumMessageId(cachedMessages)));
+
+                        if (chatVisible
+                                && generation == conversationGeneration
+                                && peer.equals(selectedPeer)) {
                             boolean wasNearBottom = isMessagesScrollNearBottom();
-                            List<ChatApi.Message> additions = addVisibleMessages(result.messages);
+                            List<ChatApi.Message> additions = addVisibleMessages(
+                                    messagesForPeer(result.messages, account.username, selectedPeer)
+                            );
                             appendMessageRows(additions);
                             if (ScrollPolicy.shouldScrollAfterAppend(wasNearBottom, additions.size())) {
                                 scrollMessagesToBottom();
                             }
                         }
-                        lastMessageId = Math.max(lastMessageId, result.lastId);
+                    }
+                    if (forceFresh) {
+                        finishManualReload();
                     }
                     runPendingMessageReload();
                 },
@@ -684,9 +766,57 @@ public class MainActivity extends Activity {
                     } else if (requestIsCurrent && showErrors) {
                         toast(errorMessage(error));
                     }
+                    if (forceFresh) {
+                        finishManualReload();
+                    }
                     runPendingMessageReload();
                 }
         );
+    }
+
+    private void restoreCachedMessages(String username) {
+        cachedMessages.clear();
+        cachedMessages.addAll(messageCache.load(username));
+        lastMessageId = maximumMessageId(cachedMessages);
+    }
+
+    private void rebuildVisibleMessagesFromCache() {
+        visibleMessages.clear();
+        visibleMessageIds.clear();
+        addVisibleMessages(messagesForPeer(
+                cachedMessages,
+                currentAccount == null ? "" : currentAccount.username,
+                selectedPeer
+        ));
+    }
+
+    private List<ChatApi.Message> messagesForPeer(
+            List<ChatApi.Message> messages,
+            String username,
+            String peer
+    ) {
+        ArrayList<ChatApi.Message> filtered = new ArrayList<>();
+        String selected = peer == null ? "" : peer;
+        for (ChatApi.Message message : messages) {
+            MessageAccessPolicy.requireMessage(username, "", message);
+            if (!MessageAccessPolicy.isRenderable(message)) {
+                continue;
+            }
+            if (selected.isEmpty()
+                    || (username.equals(message.sender) && selected.equals(message.recipient))
+                    || (selected.equals(message.sender) && username.equals(message.recipient))) {
+                filtered.add(message);
+            }
+        }
+        return filtered;
+    }
+
+    private int maximumMessageId(List<ChatApi.Message> messages) {
+        int maximum = 0;
+        for (ChatApi.Message message : messages) {
+            maximum = Math.max(maximum, message.id);
+        }
+        return maximum;
     }
 
     private void loadContacts(boolean showErrors) {
@@ -705,7 +835,11 @@ public class MainActivity extends Activity {
                 result -> {
                     loadingContacts = false;
                     if (chatVisible && accountMatches(account)) {
+                        boolean colorsChanged = contactColorsChanged(contacts, result);
                         contacts = result;
+                        if (colorsChanged) {
+                            renderMessages();
+                        }
                     }
                     runPendingContactReload();
                 },
@@ -719,6 +853,22 @@ public class MainActivity extends Activity {
                     runPendingContactReload();
                 }
         );
+    }
+
+    private boolean contactColorsChanged(List<ChatApi.Contact> before, List<ChatApi.Contact> after) {
+        Map<String, String> colors = new HashMap<>();
+        for (ChatApi.Contact contact : before) {
+            colors.put(contact.username, contact.color);
+        }
+        if (colors.size() != after.size()) {
+            return true;
+        }
+        for (ChatApi.Contact contact : after) {
+            if (!contact.color.equals(colors.get(contact.username))) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private void loadLoginEvents() {
@@ -812,12 +962,15 @@ public class MainActivity extends Activity {
     }
 
     private View messageRow(ChatApi.Message message) {
-        boolean outgoing = currentAccount != null && message.sender.equals(currentAccount.username);
+        boolean outgoing = currentAccount != null
+                && MessagePresentation.isOutgoing(currentAccount.username, message);
         String peer = outgoing ? message.recipient : message.sender;
+        int assignedColor = assignedContactColor(peer);
+        int alignment = outgoing ? Gravity.END : Gravity.START;
 
         LinearLayout row = new LinearLayout(this);
         row.setOrientation(LinearLayout.VERTICAL);
-        row.setGravity(outgoing ? Gravity.END : Gravity.START);
+        row.setGravity(alignment);
         row.setPadding(0, dp(5), 0, dp(5));
         View.OnClickListener chooseRecipient = view -> {
             selectedPeer = peer;
@@ -829,16 +982,57 @@ public class MainActivity extends Activity {
         };
         row.setOnClickListener(chooseRecipient);
 
-        TextView meta = text(peer + "  " + message.createdAt, 11, palette.muted, Typeface.NORMAL);
-        meta.setGravity(outgoing ? Gravity.END : Gravity.START);
-        meta.setMaxWidth(dp(320));
-        row.addView(meta);
+        LinearLayout metaLine = new LinearLayout(this);
+        metaLine.setOrientation(LinearLayout.HORIZONTAL);
+        metaLine.setGravity(Gravity.CENTER_VERTICAL);
+        ImageView avatar = profileAvatar(MessagePresentation.senderUsername(message), currentAccount);
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(40), dp(40));
+        avatarParams.rightMargin = dp(7);
+        metaLine.addView(avatar, avatarParams);
+        if (assignedColor != Color.TRANSPARENT) {
+            View colorMarker = new View(this);
+            colorMarker.setBackground(round(assignedColor, dp(999)));
+            LinearLayout.LayoutParams markerParams = new LinearLayout.LayoutParams(dp(9), dp(9));
+            markerParams.rightMargin = dp(6);
+            metaLine.addView(colorMarker, markerParams);
+        }
+        TextView meta = text(
+                MessagePresentation.peerUsername(currentAccount.username, message)
+                        + "  "
+                        + MessageTimeFormatter.format(message),
+                11,
+                palette.muted,
+                Typeface.NORMAL
+        );
+        meta.setGravity(alignment);
+        meta.setMaxWidth(dp(390));
+        metaLine.addView(meta, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+        LinearLayout.LayoutParams metaParams = new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        );
+        metaParams.gravity = alignment;
+        row.addView(metaLine, metaParams);
+
+        View.OnLongClickListener copyMessage = view -> {
+            if (!MessageClipboard.copy(this, message)) {
+                return false;
+            }
+            toast(copy.messageCopied());
+            return true;
+        };
+        row.setOnLongClickListener(copyMessage);
 
         LinearLayout bubble = new LinearLayout(this);
         bubble.setOrientation(LinearLayout.VERTICAL);
         bubble.setPadding(dp(12), dp(9), dp(12), dp(9));
-        bubble.setBackground(round(outgoing ? palette.outgoing : palette.incoming, dp(16)));
+        bubble.setBackground(messageBubbleBackground(outgoing, assignedColor));
         bubble.setOnClickListener(chooseRecipient);
+        bubble.setOnLongClickListener(copyMessage);
+        bubble.setTooltipText(copy.longPressMessage());
 
         if (message.isImage()) {
             ImageView image = new ImageView(this);
@@ -884,8 +1078,38 @@ public class MainActivity extends Activity {
                 ViewGroup.LayoutParams.WRAP_CONTENT
         );
         params.topMargin = dp(3);
+        params.gravity = alignment;
         row.addView(bubble, params);
         return row;
+    }
+
+    private ChatApi.Contact contactForPeer(String peer) {
+        for (ChatApi.Contact contact : contacts) {
+            if (contact.username.equals(peer)) {
+                return contact;
+            }
+        }
+        return null;
+    }
+
+    private int assignedContactColor(String peer) {
+        ChatApi.Contact contact = contactForPeer(peer);
+        if (contact == null || contact.color == null || !contact.color.matches("^#[0-9A-Fa-f]{6}$")) {
+            return Color.TRANSPARENT;
+        }
+        try {
+            return Color.parseColor(contact.color);
+        } catch (IllegalArgumentException ignored) {
+            return Color.TRANSPARENT;
+        }
+    }
+
+    private GradientDrawable messageBubbleBackground(boolean outgoing, int contactColor) {
+        GradientDrawable drawable = round(outgoing ? palette.outgoing : palette.incoming, dp(16));
+        if (contactColor != Color.TRANSPARENT) {
+            drawable.setStroke(dp(3), contactColor);
+        }
+        return drawable;
     }
 
     private void loadImage(int id, ImageView imageView) {
@@ -944,6 +1168,100 @@ public class MainActivity extends Activity {
         if (status instanceof View) {
             ((View) status).setVisibility(View.GONE);
         }
+    }
+
+    private ImageView profileAvatar(String username, AccountStore.Account accessAccount) {
+        ImageView avatar = new ImageView(this);
+        prepareProfileAvatar(avatar, username);
+        loadProfileImage(accessAccount, username, avatar);
+        return avatar;
+    }
+
+    private void prepareProfileAvatar(ImageView avatar, String username) {
+        avatar.setScaleType(ImageView.ScaleType.FIT_CENTER);
+        avatar.setAdjustViewBounds(false);
+        avatar.setImageDrawable(null);
+        avatar.setBackground(strokeRound(
+                withAlpha(palette.menuItem, 190),
+                withAlpha(palette.border, 150),
+                dp(5)
+        ));
+        avatar.setContentDescription(username);
+        avatar.setTag(username);
+        avatar.setVisibility(View.VISIBLE);
+    }
+
+    private void loadProfileImage(AccountStore.Account accessAccount, String username, ImageView imageView) {
+        imageView.setTag(username);
+        if (accessAccount == null || username == null || username.isEmpty()) {
+            imageView.setVisibility(View.INVISIBLE);
+            return;
+        }
+        Bitmap cached = profileImageCache.get(username);
+        if (cached != null) {
+            if (username.equals(imageView.getTag())) {
+                deliverProfileImage(imageView, cached);
+            }
+            return;
+        }
+        if (missingProfileUsers.contains(username)) {
+            imageView.setVisibility(View.INVISIBLE);
+            return;
+        }
+
+        List<ImageView> waiting = pendingProfileViews.get(username);
+        if (waiting == null) {
+            waiting = new ArrayList<>();
+            pendingProfileViews.put(username, waiting);
+        }
+        waiting.add(imageView);
+        if (!loadingProfileUsers.add(username)) {
+            return;
+        }
+
+        imageExecutor.execute(() -> {
+            Bitmap bitmap = null;
+            boolean notFound = false;
+            try {
+                bitmap = ChatApi.profileImage(accessAccount.token, username);
+                notFound = bitmap == null;
+            } catch (Exception ignored) {
+            }
+            Bitmap result = bitmap;
+            boolean missing = notFound;
+            mainHandler.post(() -> {
+                loadingProfileUsers.remove(username);
+                List<ImageView> targets = pendingProfileViews.remove(username);
+                if (result != null) {
+                    profileImageCache.put(username, result);
+                    missingProfileUsers.remove(username);
+                    if (targets != null) {
+                        for (ImageView target : targets) {
+                            if (username.equals(target.getTag())) {
+                                deliverProfileImage(target, result);
+                            }
+                        }
+                    }
+                } else if (missing) {
+                    missingProfileUsers.add(username);
+                    if (targets != null) {
+                        for (ImageView target : targets) {
+                            if (username.equals(target.getTag())) {
+                                target.setVisibility(View.INVISIBLE);
+                            }
+                        }
+                    }
+                }
+            });
+        });
+    }
+
+    private void deliverProfileImage(ImageView imageView, Bitmap bitmap) {
+        imageView.setVisibility(View.VISIBLE);
+        imageView.setBackgroundColor(Color.TRANSPARENT);
+        BitmapDrawable drawable = new BitmapDrawable(getResources(), bitmap);
+        drawable.setFilterBitmap(false);
+        imageView.setImageDrawable(drawable);
     }
 
     private void showImageViewer(ChatApi.Message message, String peer) {
@@ -1105,8 +1423,8 @@ public class MainActivity extends Activity {
         LinearLayout languagesTop = new LinearLayout(this);
         languagesTop.setOrientation(LinearLayout.HORIZONTAL);
         panel.addView(languagesTop, matchWrap());
-        addLanguageButton(languagesTop, "Deutsch", "de");
         addLanguageButton(languagesTop, "English", "en");
+        addLanguageButton(languagesTop, "Deutsch", "de");
         LinearLayout languagesMiddle = new LinearLayout(this);
         languagesMiddle.setOrientation(LinearLayout.HORIZONTAL);
         panel.addView(languagesMiddle, topMargin(matchWrap(), dp(6)));
@@ -1120,7 +1438,9 @@ public class MainActivity extends Activity {
 
         addNotificationSettings(panel);
 
-        panel.addView(section(copy.accounts));
+        TextView accountsHeading = section(copy.accounts);
+        accountsHeading.setOnClickListener(view -> handleAccountHeadingTap());
+        panel.addView(accountsHeading);
         for (AccountStore.Account account : accountStore.loadAccounts()) {
             panel.addView(accountRow(account), topMargin(matchWrap(), dp(6)));
         }
@@ -1132,25 +1452,389 @@ public class MainActivity extends Activity {
         panel.addView(addAccount, topMargin(matchWrap(), dp(8)));
 
         panel.addView(section(copy.contacts));
+        TextView bulkSend = menuChip(copy.multiSend(), false);
+        bulkSend.setEnabled(!contacts.isEmpty());
+        bulkSend.setAlpha(contacts.isEmpty() ? 0.55f : 1f);
+        bulkSend.setOnClickListener(view -> showBulkContactSelection());
+        panel.addView(bulkSend, new LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                dp(40)
+        ));
         if (contacts.isEmpty()) {
             TextView none = text(copy.noContacts, 13, palette.muted, Typeface.NORMAL);
-            panel.addView(none, matchWrap());
+            panel.addView(none, topMargin(matchWrap(), dp(8)));
         } else {
             for (ChatApi.Contact contact : contacts) {
-                TextView contactButton = menuItem(contact.username + "  (" + contact.messageCount + ")", false);
-                contactButton.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
-                contactButton.setOnClickListener(view -> {
-                    selectedPeer = contact.username;
-                    if (recipientInput != null) {
-                        recipientInput.setText(contact.username);
-                    }
-                    closeMenu();
-                    updateConversationTitle();
-                    loadMessages(true, true);
-                });
-                panel.addView(contactButton, topMargin(matchWrap(), dp(6)));
+                panel.addView(contactRow(contact), topMargin(matchWrap(), dp(6)));
             }
         }
+
+        if (debugSettings.isEnabled()) {
+            TextView debugMenu = menuItem(copy.debugMenu(), false);
+            debugMenu.setOnClickListener(view -> {
+                closeMenu();
+                showDebugMenu();
+            });
+            panel.addView(debugMenu, topMargin(matchWrap(), dp(16)));
+        }
+    }
+
+    private void handleAccountHeadingTap() {
+        DebugActivationCounter.Result result = debugActivationCounter.tap(debugSettings.isEnabled());
+        if (result == DebugActivationCounter.Result.SHOW_FIVE_MORE_HINT) {
+            toast("Press five times to activate the debug mode");
+            return;
+        }
+        if (result == DebugActivationCounter.Result.ACTIVATE) {
+            debugSettings.setEnabled(true);
+            toast(copy.debugModeActivated());
+            closeMenu();
+            openMenu();
+        }
+    }
+
+    private void showDebugMenu() {
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(8), dp(22), 0);
+
+        Switch enabled = new Switch(this);
+        enabled.setText(copy.debugMode());
+        enabled.setTextColor(palette.text);
+        enabled.setTextSize(15);
+        enabled.setChecked(debugSettings.isEnabled());
+        enabled.setPadding(0, dp(8), 0, dp(8));
+        content.addView(enabled, matchWrap());
+
+        Switch technicalErrors = new Switch(this);
+        technicalErrors.setText(copy.debugTechnicalErrors());
+        technicalErrors.setTextColor(palette.text);
+        technicalErrors.setTextSize(15);
+        technicalErrors.setChecked(debugSettings.showTechnicalErrors());
+        technicalErrors.setPadding(0, dp(8), 0, dp(8));
+        technicalErrors.setOnCheckedChangeListener((button, checked) ->
+                debugSettings.setShowTechnicalErrors(checked)
+        );
+        content.addView(technicalErrors, matchWrap());
+
+        TextView explanation = text(copy.debugErrorExplanation(), 13, palette.muted, Typeface.NORMAL);
+        explanation.setPadding(0, dp(8), 0, dp(8));
+        content.addView(explanation, matchWrap());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(copy.debugMenu())
+                .setView(content)
+                .setPositiveButton(copy.closeDescription(), null)
+                .create();
+        enabled.setOnCheckedChangeListener((button, checked) -> {
+            debugSettings.setEnabled(checked);
+            if (!checked) {
+                toast(copy.debugModeDisabled());
+                dialog.dismiss();
+            }
+        });
+        dialog.show();
+    }
+
+    private View contactRow(ChatApi.Contact contact) {
+        LinearLayout row = new LinearLayout(this);
+        row.setOrientation(LinearLayout.HORIZONTAL);
+        row.setGravity(Gravity.CENTER_VERTICAL);
+        row.setPadding(dp(12), dp(8), dp(12), dp(8));
+        row.setBackground(strokeRound(
+                withAlpha(palette.menuItem, 190),
+                withAlpha(palette.border, 185),
+                dp(8)
+        ));
+
+        ImageView avatar = profileAvatar(contact.username, currentAccount);
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        avatarParams.rightMargin = dp(10);
+        row.addView(avatar, avatarParams);
+
+        View marker = new View(this);
+        int color = assignedContactColor(contact.username);
+        marker.setBackground(round(color == Color.TRANSPARENT ? palette.muted : color, dp(999)));
+        LinearLayout.LayoutParams markerParams = new LinearLayout.LayoutParams(dp(12), dp(12));
+        markerParams.rightMargin = dp(10);
+        row.addView(marker, markerParams);
+
+        LinearLayout textBlock = new LinearLayout(this);
+        textBlock.setOrientation(LinearLayout.VERTICAL);
+        TextView name = text(contact.username + "  (" + contact.messageCount + ")", 15, palette.text, Typeface.NORMAL);
+        name.setSingleLine(true);
+        name.setEllipsize(TextUtils.TruncateAt.END);
+        textBlock.addView(name, matchWrap());
+        TextView note = text(contact.note.isEmpty() ? copy.noInternalNote() : contact.note, 11, palette.muted, Typeface.NORMAL);
+        note.setMaxLines(2);
+        note.setEllipsize(TextUtils.TruncateAt.END);
+        textBlock.addView(note, topMargin(matchWrap(), dp(2)));
+        row.addView(textBlock, new LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1));
+
+        row.setOnClickListener(view -> {
+            selectedPeer = contact.username;
+            if (recipientInput != null) {
+                recipientInput.setText(contact.username);
+            }
+            closeMenu();
+            updateConversationTitle();
+            loadMessages(true, true);
+        });
+        row.setOnLongClickListener(view -> {
+            closeMenu();
+            showContactEditor(contact);
+            return true;
+        });
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            row.setTooltipText(copy.longPressContact());
+        }
+        return row;
+    }
+
+    private void showBulkContactSelection() {
+        if (contacts.isEmpty()) {
+            toast(copy.noContacts);
+            return;
+        }
+        closeMenu();
+
+        String[] names = new String[contacts.size()];
+        boolean[] selected = new boolean[contacts.size()];
+        for (int i = 0; i < contacts.size(); i++) {
+            names[i] = contacts.get(i).username;
+        }
+
+        final int maximumRecipients = 6;
+        new AlertDialog.Builder(this)
+                .setTitle(copy.multiSend())
+                .setMultiChoiceItems(names, selected, (dialog, which, checked) -> {
+                    if (checked) {
+                        int selectedCount = 0;
+                        for (boolean value : selected) {
+                            if (value) selectedCount++;
+                        }
+                        if (selectedCount > maximumRecipients) {
+                            ((AlertDialog)dialog).getListView().setItemChecked(which, false);
+                            selected[which] = false;
+                            toast(copy.selectAtMostSix());
+                            return;
+                        }
+                    }
+                    selected[which] = checked;
+                })
+                .setNegativeButton(copy.cancel(), null)
+                .setPositiveButton(copy.next(), (dialog, which) -> {
+                    ArrayList<String> recipients = new ArrayList<>();
+                    for (int i = 0; i < names.length; i++) {
+                        if (selected[i]) {
+                            recipients.add(names[i]);
+                        }
+                    }
+                    if (recipients.isEmpty()) {
+                        toast(copy.selectContact());
+                        return;
+                    }
+                    if (recipients.size() > maximumRecipients) {
+                        toast(copy.selectAtMostSix());
+                        return;
+                    }
+                    showBulkMessageComposer(recipients);
+                })
+                .show();
+    }
+
+    private void showBulkMessageComposer(List<String> recipients) {
+        selectedBulkImageUri = null;
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(8), dp(22), 0);
+
+        TextView summary = text(copy.selectedContacts() + " " + TextUtils.join(", ", recipients), 12, palette.muted, Typeface.NORMAL);
+        content.addView(summary, matchWrap());
+
+        EditText input = input(copy.message);
+        input.setMinLines(4);
+        input.setMaxLines(8);
+        input.setGravity(Gravity.TOP | Gravity.START);
+        input.setFilters(new InputFilter[]{new InputFilter.LengthFilter(2000)});
+        content.addView(input, topMargin(matchWrap(), dp(10)));
+
+        LinearLayout imageActions = new LinearLayout(this);
+        imageActions.setOrientation(LinearLayout.HORIZONTAL);
+        imageActions.setGravity(Gravity.CENTER_VERTICAL);
+        imageActions.setPadding(0, dp(8), 0, 0);
+        Button attach = ghostButton(copy.image);
+        attach.setOnClickListener(view -> chooseImage(REQ_BULK_IMAGE));
+        imageActions.addView(attach, new LinearLayout.LayoutParams(dp(104), dp(48)));
+        bulkImageStatusView = text(copy.optional, 12, palette.muted, Typeface.NORMAL);
+        bulkImageStatusView.setPadding(dp(8), 0, 0, 0);
+        imageActions.addView(bulkImageStatusView, new LinearLayout.LayoutParams(
+                0,
+                ViewGroup.LayoutParams.WRAP_CONTENT,
+                1
+        ));
+        content.addView(imageActions, matchWrap());
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(copy.multiSend())
+                .setView(content)
+                .setNegativeButton(copy.back, (ignoredDialog, which) -> showBulkContactSelection())
+                .setPositiveButton(copy.send, null)
+                .create();
+        dialog.setOnShowListener(ignored -> {
+            Button sendButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            sendButton.setOnClickListener(view -> {
+                    String message = input.getText().toString().trim();
+                    if (message.isEmpty() && selectedBulkImageUri == null) {
+                        toast(copy.messageOrImageMissing);
+                        return;
+                    }
+                    sendManyContacts(recipients, message, selectedBulkImageUri, sendButton, dialog);
+            });
+        });
+        dialog.setOnDismissListener(ignored -> {
+            selectedBulkImageUri = null;
+            bulkImageStatusView = null;
+        });
+        dialog.show();
+    }
+
+    private void sendManyContacts(
+            List<String> recipients,
+            String message,
+            Uri imageUri,
+            Button sendButton,
+            AlertDialog dialog
+    ) {
+        AccountStore.Account account = currentAccount;
+        if (account == null) {
+            return;
+        }
+        sendButton.setEnabled(false);
+        if (bulkImageStatusView != null && imageUri != null) {
+            bulkImageStatusView.setText(copy.compressing);
+        }
+        runTask(
+                () -> {
+                    byte[] image = imageUri == null ? null : compressImage(imageUri);
+                    return ChatApi.sendMany(account.token, recipients, message, image);
+                },
+                sentCount -> {
+                    dialog.dismiss();
+                    selectedPeer = "";
+                    draftRecipient = "";
+                    draftMessage = "";
+                    if (recipientInput != null) {
+                        recipientInput.setText("");
+                    }
+                    updateConversationTitle();
+                    loadMessages(true, true);
+                    loadContacts(false);
+                    toast(copy.bulkSent(sentCount));
+                },
+                error -> {
+                    sendButton.setEnabled(true);
+                    if (bulkImageStatusView != null) {
+                        bulkImageStatusView.setText(imageUri == null ? copy.optional : copy.imageSelected);
+                    }
+                    if (isUnauthorized(error) && accountMatches(account)) {
+                        handleExpiredSession(account);
+                    } else {
+                        toast(errorMessage(error));
+                    }
+                }
+        );
+    }
+
+    private void showContactEditor(ChatApi.Contact contact) {
+        String[] availableColors = {
+                "#64748B", "#2563EB", "#16A34A", "#EA580C",
+                "#DC2626", "#9333EA", "#0891B2", "#CA8A04"
+        };
+        String initialColor = contact.color != null && contact.color.matches("^#[0-9A-Fa-f]{6}$")
+                ? contact.color.toUpperCase()
+                : availableColors[0];
+        String[] selectedColor = {initialColor};
+
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(22), dp(8), dp(22), 0);
+        content.addView(label(copy.contactColor()), matchWrap());
+
+        LinearLayout colorRow = new LinearLayout(this);
+        colorRow.setOrientation(LinearLayout.HORIZONTAL);
+        List<TextView> colorChips = new ArrayList<>();
+        for (String hex : availableColors) {
+            TextView chip = text("", 16, Color.WHITE, Typeface.BOLD);
+            chip.setGravity(Gravity.CENTER);
+            chip.setOnClickListener(view -> {
+                selectedColor[0] = hex;
+                updateContactColorChips(colorChips, availableColors, selectedColor[0]);
+            });
+            colorChips.add(chip);
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(38), 1);
+            params.rightMargin = dp(4);
+            colorRow.addView(chip, params);
+        }
+        updateContactColorChips(colorChips, availableColors, selectedColor[0]);
+        content.addView(colorRow, matchWrap());
+
+        content.addView(label(copy.internalNote()), matchWrap());
+        EditText note = input(copy.visibleOnlyToYou());
+        note.setMinLines(3);
+        note.setMaxLines(7);
+        note.setGravity(Gravity.TOP | Gravity.START);
+        note.setFilters(new InputFilter[]{new InputFilter.LengthFilter(1000)});
+        note.setText(contact.note);
+        content.addView(note, matchWrap());
+
+        new AlertDialog.Builder(this)
+                .setTitle(copy.contactSettings() + ": " + contact.username)
+                .setView(content)
+                .setNegativeButton(copy.cancel(), null)
+                .setPositiveButton(copy.save(), (dialog, which) -> saveContactPreference(
+                        contact.username,
+                        selectedColor[0],
+                        note.getText().toString()
+                ))
+                .show();
+    }
+
+    private void updateContactColorChips(List<TextView> chips, String[] colors, String selected) {
+        for (int i = 0; i < chips.size(); i++) {
+            GradientDrawable background = round(Color.parseColor(colors[i]), dp(999));
+            boolean active = colors[i].equalsIgnoreCase(selected);
+            if (active) {
+                background.setStroke(dp(3), palette.text);
+            }
+            TextView chip = chips.get(i);
+            chip.setText(active ? "✓" : "");
+            chip.setBackground(background);
+        }
+    }
+
+    private void saveContactPreference(String username, String color, String note) {
+        AccountStore.Account account = currentAccount;
+        if (account == null) {
+            return;
+        }
+        runTask(
+                () -> {
+                    ChatApi.updateContact(account.token, username, color, note);
+                    return true;
+                },
+                ignored -> {
+                    toast(copy.contactSaved());
+                    loadContacts(true);
+                },
+                error -> {
+                    if (isUnauthorized(error) && accountMatches(account)) {
+                        handleExpiredSession(account);
+                    } else {
+                        toast(errorMessage(error));
+                    }
+                }
+        );
     }
 
     private void addThemeButton(LinearLayout parent, String label, String id) {
@@ -1237,6 +1921,11 @@ public class MainActivity extends Activity {
         row.setOrientation(LinearLayout.HORIZONTAL);
         row.setGravity(Gravity.CENTER_VERTICAL);
 
+        ImageView avatar = profileAvatar(account.username, account);
+        LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(48), dp(48));
+        avatarParams.rightMargin = dp(10);
+        row.addView(avatar, avatarParams);
+
         TextView switchButton = menuItem(account.username, account.username.equals(accountStore.getActiveUsername()));
         switchButton.setGravity(Gravity.CENTER_VERTICAL | Gravity.START);
         switchButton.setSingleLine(true);
@@ -1248,6 +1937,19 @@ public class MainActivity extends Activity {
             closeMenu();
             showChat(true);
         });
+        View.OnLongClickListener editProfile = view -> {
+            closeMenu();
+            openProfileEditor(account);
+            return true;
+        };
+        row.setOnLongClickListener(editProfile);
+        switchButton.setOnLongClickListener(editProfile);
+        avatar.setOnLongClickListener(editProfile);
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            row.setTooltipText(ProfileEditorText.from(copy.code).longPressHint);
+            switchButton.setTooltipText(ProfileEditorText.from(copy.code).longPressHint);
+            avatar.setTooltipText(ProfileEditorText.from(copy.code).longPressHint);
+        }
         row.addView(switchButton, new LinearLayout.LayoutParams(0, dp(48), 1));
 
         TextView remove = menuChip(copy.logout, false);
@@ -1257,6 +1959,286 @@ public class MainActivity extends Activity {
         removeParams.leftMargin = dp(8);
         row.addView(remove, removeParams);
         return row;
+    }
+
+    private void openProfileEditor(AccountStore.Account account) {
+        ProfileEditorText labels = ProfileEditorText.from(copy.code);
+        Bitmap cached = profileImageCache.get(account.username);
+        if (cached != null) {
+            showProfileEditor(account, cached, true);
+            return;
+        }
+        if (missingProfileUsers.contains(account.username)) {
+            showProfileEditor(account, null, false);
+            return;
+        }
+
+        toast(labels.loading);
+        runTask(
+                () -> ChatApi.profileImage(account.token, account.username),
+                bitmap -> {
+                    if (bitmap == null) {
+                        missingProfileUsers.add(account.username);
+                    } else {
+                        profileImageCache.put(account.username, bitmap);
+                        missingProfileUsers.remove(account.username);
+                    }
+                    showProfileEditor(account, bitmap, bitmap != null);
+                },
+                error -> {
+                    if (isUnauthorized(error) && accountMatches(account)) {
+                        handleExpiredSession(account);
+                    } else {
+                        toast(labels.loadFailed);
+                    }
+                }
+        );
+    }
+
+    private void showProfileEditor(AccountStore.Account account, Bitmap existing, boolean hasExisting) {
+        ProfileEditorText labels = ProfileEditorText.from(copy.code);
+        LinearLayout content = new LinearLayout(this);
+        content.setOrientation(LinearLayout.VERTICAL);
+        content.setPadding(dp(16), dp(8), dp(16), dp(8));
+
+        TextView instruction = text(labels.instructions, 13, palette.muted, Typeface.NORMAL);
+        instruction.setPadding(0, 0, 0, dp(8));
+        content.addView(instruction, matchWrap());
+
+        ProfileImageEditorView editor = new ProfileImageEditorView(this, existing);
+        int screenWidth = getResources().getDisplayMetrics().widthPixels;
+        int screenHeight = getResources().getDisplayMetrics().heightPixels;
+        int availableWidth = Math.max(dp(180), screenWidth - dp(56));
+        int availableHeight = Math.max(dp(180), Math.round(screenHeight * 0.54f));
+        int editorSize = Math.min(dp(560), Math.min(availableWidth, availableHeight));
+        LinearLayout.LayoutParams editorParams = new LinearLayout.LayoutParams(editorSize, editorSize);
+        editorParams.gravity = Gravity.CENTER_HORIZONTAL;
+        content.addView(editor, editorParams);
+
+        LinearLayout toolRow = new LinearLayout(this);
+        toolRow.setOrientation(LinearLayout.HORIZONTAL);
+        toolRow.setPadding(0, dp(10), 0, 0);
+        Button brush = ghostButton(labels.brush);
+        Button eraser = ghostButton(labels.eraser);
+        Button circle = ghostButton(labels.circle);
+        List<Button> toolButtons = new ArrayList<>();
+        toolButtons.add(brush);
+        toolButtons.add(eraser);
+        toolButtons.add(circle);
+        brush.setOnClickListener(view -> {
+            editor.setTool(ProfileImageEditorView.Tool.BRUSH);
+            updateProfileToolButtons(toolButtons, editor.getTool());
+        });
+        eraser.setOnClickListener(view -> {
+            editor.setTool(ProfileImageEditorView.Tool.ERASER);
+            updateProfileToolButtons(toolButtons, editor.getTool());
+        });
+        circle.setOnClickListener(view -> {
+            editor.setTool(ProfileImageEditorView.Tool.CIRCLE);
+            updateProfileToolButtons(toolButtons, editor.getTool());
+        });
+        for (Button button : toolButtons) {
+            LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(44), 1);
+            params.rightMargin = dp(5);
+            toolRow.addView(button, params);
+        }
+        updateProfileToolButtons(toolButtons, editor.getTool());
+        content.addView(toolRow, matchWrap());
+
+        TextView widthLabel = text(labels.size + ": 1 px", 12, palette.muted, Typeface.BOLD);
+        widthLabel.setPadding(0, dp(9), 0, 0);
+        content.addView(widthLabel, matchWrap());
+        SeekBar width = new SeekBar(this);
+        width.setMax(4);
+        width.setProgress(0);
+        width.setOnSeekBarChangeListener(new SimpleSeekBarListener(progress -> {
+            int value = progress + 1;
+            editor.setBrushWidth(value);
+            widthLabel.setText(labels.size + ": " + value + " px");
+        }));
+        content.addView(width, matchWrap());
+
+        TextView colorLabel = text(labels.color, 12, palette.muted, Typeface.BOLD);
+        colorLabel.setPadding(0, dp(4), 0, dp(5));
+        content.addView(colorLabel, matchWrap());
+        int[] colors = ProfileColorPalette.colors();
+        List<TextView> colorChips = new ArrayList<>();
+        int colorRows = (colors.length + ProfileColorPalette.COLUMNS - 1) / ProfileColorPalette.COLUMNS;
+        for (int rowIndex = 0; rowIndex < colorRows; rowIndex++) {
+            LinearLayout colorsRow = new LinearLayout(this);
+            colorsRow.setOrientation(LinearLayout.HORIZONTAL);
+            for (int column = 0; column < ProfileColorPalette.COLUMNS; column++) {
+                int colorIndex = rowIndex * ProfileColorPalette.COLUMNS + column;
+                if (colorIndex >= colors.length) {
+                    break;
+                }
+                int selectedColor = colors[colorIndex];
+                TextView chip = text("", 16, Color.WHITE, Typeface.BOLD);
+                chip.setGravity(Gravity.CENTER);
+                chip.setOnClickListener(view -> {
+                    editor.setColor(selectedColor);
+                    updateProfileColorChips(colorChips, colors, selectedColor);
+                });
+                colorChips.add(chip);
+                LinearLayout.LayoutParams params = new LinearLayout.LayoutParams(0, dp(44), 1);
+                params.rightMargin = dp(5);
+                colorsRow.addView(chip, params);
+            }
+            content.addView(colorsRow, rowIndex == 0 ? matchWrap() : topMargin(matchWrap(), dp(5)));
+        }
+        editor.setColor(colors[0]);
+        updateProfileColorChips(colorChips, colors, colors[0]);
+
+        TextView opacityLabel = text(labels.opacity + ": 100%", 12, palette.muted, Typeface.BOLD);
+        opacityLabel.setPadding(0, dp(9), 0, 0);
+        content.addView(opacityLabel, matchWrap());
+        SeekBar opacity = new SeekBar(this);
+        opacity.setMax(100);
+        opacity.setProgress(100);
+        opacity.setOnSeekBarChangeListener(new SimpleSeekBarListener(progress -> {
+            editor.setOpacity(Math.round(progress * 255f / 100f));
+            opacityLabel.setText(labels.opacity + ": " + progress + "%");
+        }));
+        content.addView(opacity, matchWrap());
+
+        Switch fillCircle = new Switch(this);
+        fillCircle.setText(labels.fillCircle);
+        fillCircle.setTextColor(palette.text);
+        fillCircle.setPadding(0, dp(5), 0, dp(5));
+        fillCircle.setOnCheckedChangeListener((button, checked) -> editor.setCircleFilled(checked));
+        content.addView(fillCircle, matchWrap());
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.setFillViewport(false);
+        scroll.addView(content, new ScrollView.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+        ));
+
+        AlertDialog dialog = new AlertDialog.Builder(this)
+                .setTitle(labels.title + ": " + account.username)
+                .setNegativeButton(labels.cancel, null)
+                .setPositiveButton(labels.save, null)
+                .create();
+        dialog.setView(scroll, 0, 0, 0, 0);
+        dialog.setCancelable(false);
+        dialog.setOnShowListener(ignored -> {
+            Window window = dialog.getWindow();
+            if (window != null) {
+                window.setLayout(Math.min(screenWidth - dp(20), dp(640)), ViewGroup.LayoutParams.WRAP_CONTENT);
+            }
+            dialog.getButton(AlertDialog.BUTTON_NEGATIVE).setOnClickListener(view -> {
+                if (!editor.hasUnsavedChanges()) {
+                    dialog.dismiss();
+                    return;
+                }
+                new AlertDialog.Builder(this)
+                        .setTitle(labels.discardTitle)
+                        .setMessage(labels.discardMessage)
+                        .setNegativeButton(labels.continueEditing, null)
+                        .setPositiveButton(labels.discard, (confirmation, which) -> dialog.dismiss())
+                        .show();
+            });
+            Button saveButton = dialog.getButton(AlertDialog.BUTTON_POSITIVE);
+            saveButton.setOnClickListener(view -> {
+                Runnable upload = () -> uploadProfileImage(account, editor, dialog, saveButton, labels, true);
+                if (hasExisting) {
+                    new AlertDialog.Builder(this)
+                            .setTitle(labels.overwriteTitle)
+                            .setMessage(labels.overwriteMessage)
+                            .setNegativeButton(labels.continueEditing, null)
+                            .setPositiveButton(labels.overwrite, (confirmation, which) -> upload.run())
+                            .show();
+                } else {
+                    uploadProfileImage(account, editor, dialog, saveButton, labels, false);
+                }
+            });
+        });
+        dialog.show();
+    }
+
+    private void uploadProfileImage(
+            AccountStore.Account account,
+            ProfileImageEditorView editor,
+            AlertDialog dialog,
+            Button saveButton,
+            ProfileEditorText labels,
+            boolean overwrite
+    ) {
+        Bitmap snapshot = editor.snapshot();
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        if (!snapshot.compress(Bitmap.CompressFormat.PNG, 100, output)) {
+            snapshot.recycle();
+            toast(labels.saveFailed);
+            return;
+        }
+        byte[] png = output.toByteArray();
+        saveButton.setEnabled(false);
+        runTask(
+                () -> {
+                    ChatApi.updateProfileImage(account.token, png, overwrite);
+                    return true;
+                },
+                ignored -> {
+                    profileImageCache.put(account.username, snapshot);
+                    missingProfileUsers.remove(account.username);
+                    dialog.dismiss();
+                    toast(labels.saved);
+                    if (chatVisible && rootFrame != null && currentAccount != null) {
+                        renderMessages();
+                        String headerUsername = selectedPeer.isEmpty()
+                                ? currentAccount.username
+                                : selectedPeer;
+                        if (conversationAvatar != null) {
+                            prepareProfileAvatar(conversationAvatar, headerUsername);
+                            loadProfileImage(currentAccount, headerUsername, conversationAvatar);
+                        }
+                        openMenu();
+                    }
+                },
+                error -> {
+                    snapshot.recycle();
+                    saveButton.setEnabled(true);
+                    if (!overwrite
+                            && error instanceof ChatApi.ApiException
+                            && ((ChatApi.ApiException)error).statusCode == 409) {
+                        new AlertDialog.Builder(this)
+                                .setTitle(labels.overwriteTitle)
+                                .setMessage(labels.overwriteMessage)
+                                .setNegativeButton(labels.continueEditing, null)
+                                .setPositiveButton(labels.overwrite, (confirmation, which) ->
+                                        uploadProfileImage(account, editor, dialog, saveButton, labels, true))
+                                .show();
+                    } else if (isUnauthorized(error) && accountMatches(account)) {
+                        dialog.dismiss();
+                        handleExpiredSession(account);
+                    } else {
+                        toast(labels.saveFailed);
+                    }
+                }
+        );
+    }
+
+    private void updateProfileToolButtons(List<Button> buttons, ProfileImageEditorView.Tool selected) {
+        ProfileImageEditorView.Tool[] tools = ProfileImageEditorView.Tool.values();
+        for (int i = 0; i < buttons.size() && i < tools.length; i++) {
+            buttons.get(i).setAlpha(tools[i] == selected ? 1f : 0.58f);
+        }
+    }
+
+    private void updateProfileColorChips(List<TextView> chips, int[] colors, int selected) {
+        for (int i = 0; i < chips.size() && i < colors.length; i++) {
+            GradientDrawable background = round(colors[i], dp(7));
+            if (colors[i] == selected) {
+                background.setStroke(dp(3), palette.accent);
+            } else if (colors[i] == Color.WHITE) {
+                background.setStroke(dp(1), palette.border);
+            }
+            TextView chip = chips.get(i);
+            chip.setText(colors[i] == selected ? "✓" : "");
+            chip.setTextColor(colors[i] == Color.WHITE ? Color.BLACK : Color.WHITE);
+            chip.setBackground(background);
+        }
     }
 
     private void logoutAndRemove(AccountStore.Account account) {
@@ -1299,12 +2281,18 @@ public class MainActivity extends Activity {
     }
 
     private void updateConversationTitle() {
+        String account = currentAccount == null ? "" : currentAccount.username;
+        String headerUsername = selectedPeer.isEmpty() ? account : selectedPeer;
         if (titleView != null) {
             titleView.setText(selectedPeer.isEmpty() ? copy.chat : selectedPeer);
         }
         if (subtitleView != null) {
-            String account = currentAccount == null ? "" : currentAccount.username;
-            subtitleView.setText(selectedPeer.isEmpty() ? copy.allMessagesFor(account) : copy.writingAs(account));
+            subtitleView.setText(selectedPeer.isEmpty() ? copy.allMessagesFor(account) : copy.accountLabel(account));
+        }
+        if (conversationAvatar != null
+                && !headerUsername.equals(String.valueOf(conversationAvatar.getTag()))) {
+            prepareProfileAvatar(conversationAvatar, headerUsername);
+            loadProfileImage(currentAccount, headerUsername, conversationAvatar);
         }
         if (recipientInput != null && !selectedPeer.isEmpty()) {
             recipientInput.setText(selectedPeer);
@@ -1376,7 +2364,7 @@ public class MainActivity extends Activity {
     }
 
     private void checkForUpdatesOnce() {
-        if (updateChecked || !activityStarted) {
+        if (BuildConfig.BETA_CHANNEL || updateChecked || !activityStarted) {
             return;
         }
         updateChecked = true;
@@ -1945,9 +2933,18 @@ public class MainActivity extends Activity {
             return;
         }
         boolean showErrors = pendingMessageErrors;
+        boolean forceFresh = forceMessageReloadPending;
         messageReloadPending = false;
         pendingMessageErrors = false;
-        loadMessages(true, showErrors);
+        forceMessageReloadPending = false;
+        loadMessages(true, showErrors, forceFresh);
+    }
+
+    private void finishManualReload() {
+        if (refreshButton != null) {
+            refreshButton.setText("\u21BB");
+            refreshButton.setEnabled(true);
+        }
     }
 
     private void runPendingContactReload() {
@@ -1973,8 +2970,13 @@ public class MainActivity extends Activity {
     }
 
     private String errorMessage(Exception error) {
-        String message = error.getMessage();
-        return message == null || message.trim().isEmpty() ? copy.actionFailed : message;
+        return ErrorPresenter.message(
+                copy.code,
+                error,
+                debugSettings != null
+                        && debugSettings.isEnabled()
+                        && debugSettings.showTechnicalErrors()
+        );
     }
 
     private void handleExpiredSession(AccountStore.Account account) {
@@ -2028,6 +3030,162 @@ public class MainActivity extends Activity {
                 });
             }
         });
+    }
+
+    private interface ProgressChange {
+        void accept(int progress);
+    }
+
+    private static final class SimpleSeekBarListener implements SeekBar.OnSeekBarChangeListener {
+        private final ProgressChange change;
+
+        SimpleSeekBarListener(ProgressChange change) {
+            this.change = change;
+        }
+
+        @Override
+        public void onProgressChanged(SeekBar seekBar, int progress, boolean fromUser) {
+            change.accept(progress);
+        }
+
+        @Override
+        public void onStartTrackingTouch(SeekBar seekBar) {
+        }
+
+        @Override
+        public void onStopTrackingTouch(SeekBar seekBar) {
+        }
+    }
+
+    private static final class ProfileEditorText {
+        final String title;
+        final String instructions;
+        final String brush;
+        final String eraser;
+        final String circle;
+        final String size;
+        final String color;
+        final String opacity;
+        final String fillCircle;
+        final String cancel;
+        final String save;
+        final String longPressHint;
+        final String loading;
+        final String loadFailed;
+        final String discardTitle;
+        final String discardMessage;
+        final String continueEditing;
+        final String discard;
+        final String overwriteTitle;
+        final String overwriteMessage;
+        final String overwrite;
+        final String saved;
+        final String saveFailed;
+
+        ProfileEditorText(
+                String title,
+                String instructions,
+                String brush,
+                String eraser,
+                String circle,
+                String size,
+                String color,
+                String opacity,
+                String fillCircle,
+                String cancel,
+                String save,
+                String longPressHint,
+                String loading,
+                String loadFailed,
+                String discardTitle,
+                String discardMessage,
+                String continueEditing,
+                String discard,
+                String overwriteTitle,
+                String overwriteMessage,
+                String overwrite,
+                String saved,
+                String saveFailed
+        ) {
+            this.title = title;
+            this.instructions = instructions;
+            this.brush = brush;
+            this.eraser = eraser;
+            this.circle = circle;
+            this.size = size;
+            this.color = color;
+            this.opacity = opacity;
+            this.fillCircle = fillCircle;
+            this.cancel = cancel;
+            this.save = save;
+            this.longPressHint = longPressHint;
+            this.loading = loading;
+            this.loadFailed = loadFailed;
+            this.discardTitle = discardTitle;
+            this.discardMessage = discardMessage;
+            this.continueEditing = continueEditing;
+            this.discard = discard;
+            this.overwriteTitle = overwriteTitle;
+            this.overwriteMessage = overwriteMessage;
+            this.overwrite = overwrite;
+            this.saved = saved;
+            this.saveFailed = saveFailed;
+        }
+
+        static ProfileEditorText from(String code) {
+            if ("de".equals(code)) {
+                return new ProfileEditorText(
+                        "Profilbild",
+                        "Male mit dem Finger auf der großen Fläche. Gespeichert werden exakt 32×32 Pixel.",
+                        "Pinsel",
+                        "Radierer",
+                        "Kreis",
+                        "Breite",
+                        "Farbe",
+                        "Deckkraft",
+                        "Kreis füllen",
+                        "Abbrechen",
+                        "Speichern",
+                        "Lange drücken, um das Profilbild zu bearbeiten",
+                        "Profilbild wird geladen...",
+                        "Profilbild konnte nicht geladen werden.",
+                        "Änderungen verwerfen?",
+                        "Deine nicht gespeicherten Änderungen gehen verloren.",
+                        "Weiter bearbeiten",
+                        "Verwerfen",
+                        "Profilbild ersetzen?",
+                        "Es ist bereits ein Profilbild vorhanden. Möchtest du es wirklich überschreiben?",
+                        "Überschreiben",
+                        "Profilbild gespeichert.",
+                        "Profilbild konnte nicht gespeichert werden."
+                );
+            }
+            return new ProfileEditorText(
+                    "Profile picture",
+                    "Draw with your finger on the large canvas. The saved result is exactly 32×32 pixels.",
+                    "Brush",
+                    "Eraser",
+                    "Circle",
+                    "Width",
+                    "Color",
+                    "Opacity",
+                    "Fill circle",
+                    "Cancel",
+                    "Save",
+                    "Long press to edit the profile picture",
+                    "Loading profile picture...",
+                    "The profile picture could not be loaded.",
+                    "Discard changes?",
+                    "Your unsaved changes will be lost.",
+                    "Keep editing",
+                    "Discard",
+                    "Replace profile picture?",
+                    "A profile picture already exists. Are you sure you want to overwrite it?",
+                    "Overwrite",
+                    "Profile picture saved.",
+                    "The profile picture could not be saved."
+            );
+        }
     }
 
     private static final class AppText {
@@ -2191,6 +3349,87 @@ public class MainActivity extends Activity {
             return asPrefix + user;
         }
 
+        String accountLabel(String user) {
+            if ("en".equals(code)) return "Account: " + user;
+            if ("fr".equals(code)) return "Compte : " + user;
+            if ("ru".equals(code)) return "Аккаунт: " + user;
+            if ("uk".equals(code)) return "Акаунт: " + user;
+            if ("it".equals(code)) return "Account: " + user;
+            return "Konto: " + user;
+        }
+
+        String messageCopied() {
+            if ("en".equals(code)) return "Message copied.";
+            if ("fr".equals(code)) return "Message copié.";
+            if ("ru".equals(code)) return "Сообщение скопировано.";
+            if ("uk".equals(code)) return "Повідомлення скопійовано.";
+            if ("it".equals(code)) return "Messaggio copiato.";
+            return "Nachricht kopiert.";
+        }
+
+        String longPressMessage() {
+            if ("en".equals(code)) return "Long press to copy the message";
+            if ("fr".equals(code)) return "Appui long pour copier le message";
+            if ("ru".equals(code)) return "Удерживайте, чтобы скопировать сообщение";
+            if ("uk".equals(code)) return "Утримуйте, щоб скопіювати повідомлення";
+            if ("it".equals(code)) return "Tieni premuto per copiare il messaggio";
+            return "Lange drücken, um die Nachricht zu kopieren";
+        }
+
+        String debugMenu() {
+            if ("en".equals(code)) return "Debug Menu";
+            if ("fr".equals(code)) return "Menu de débogage";
+            if ("ru".equals(code)) return "Меню отладки";
+            if ("uk".equals(code)) return "Меню налагодження";
+            if ("it".equals(code)) return "Menu di debug";
+            return "Debug-Menü";
+        }
+
+        String debugMode() {
+            if ("en".equals(code)) return "Debug mode";
+            if ("fr".equals(code)) return "Mode de débogage";
+            if ("ru".equals(code)) return "Режим отладки";
+            if ("uk".equals(code)) return "Режим налагодження";
+            if ("it".equals(code)) return "Modalità debug";
+            return "Debug-Modus";
+        }
+
+        String debugModeActivated() {
+            if ("en".equals(code)) return "Debug mode activated.";
+            if ("fr".equals(code)) return "Mode de débogage activé.";
+            if ("ru".equals(code)) return "Режим отладки включён.";
+            if ("uk".equals(code)) return "Режим налагодження ввімкнено.";
+            if ("it".equals(code)) return "Modalità debug attivata.";
+            return "Debug-Modus aktiviert.";
+        }
+
+        String debugModeDisabled() {
+            if ("en".equals(code)) return "Debug mode disabled.";
+            if ("fr".equals(code)) return "Mode de débogage désactivé.";
+            if ("ru".equals(code)) return "Режим отладки выключен.";
+            if ("uk".equals(code)) return "Режим налагодження вимкнено.";
+            if ("it".equals(code)) return "Modalità debug disattivata.";
+            return "Debug-Modus deaktiviert.";
+        }
+
+        String debugErrorExplanation() {
+            if ("en".equals(code)) return "While debug mode is active, errors include technical details.";
+            if ("fr".equals(code)) return "En mode débogage, les erreurs contiennent des détails techniques.";
+            if ("ru".equals(code)) return "В режиме отладки ошибки содержат технические сведения.";
+            if ("uk".equals(code)) return "У режимі налагодження помилки містять технічні подробиці.";
+            if ("it".equals(code)) return "In modalità debug, gli errori includono dettagli tecnici.";
+            return "Im Debug-Modus enthalten Fehler zusätzliche technische Details.";
+        }
+
+        String debugTechnicalErrors() {
+            if ("en".equals(code)) return "Show technical error details";
+            if ("fr".equals(code)) return "Afficher les détails techniques des erreurs";
+            if ("ru".equals(code)) return "Показывать технические сведения об ошибках";
+            if ("uk".equals(code)) return "Показувати технічні подробиці помилок";
+            if ("it".equals(code)) return "Mostra i dettagli tecnici degli errori";
+            return "Technische Fehlerdetails anzeigen";
+        }
+
         String menuDescription() {
             if ("fr".equals(code)) return "Menu";
             if ("ru".equals(code)) return "Меню";
@@ -2216,6 +3455,141 @@ public class MainActivity extends Activity {
             if ("uk".equals(code)) return "Закрити";
             if ("it".equals(code)) return "Chiudi";
             return "Schließen";
+        }
+
+        String multiSend() {
+            if ("en".equals(code)) return "Send to several";
+            if ("fr".equals(code)) return "Envoyer à plusieurs";
+            if ("ru".equals(code)) return "Отправить нескольким";
+            if ("uk".equals(code)) return "Надіслати кільком";
+            if ("it".equals(code)) return "Invia a più contatti";
+            return "Mehrfach senden";
+        }
+
+        String next() {
+            if ("en".equals(code)) return "Next";
+            if ("fr".equals(code)) return "Suivant";
+            if ("ru".equals(code)) return "Далее";
+            if ("uk".equals(code)) return "Далі";
+            if ("it".equals(code)) return "Avanti";
+            return "Weiter";
+        }
+
+        String cancel() {
+            if ("en".equals(code)) return "Cancel";
+            if ("fr".equals(code)) return "Annuler";
+            if ("ru".equals(code)) return "Отмена";
+            if ("uk".equals(code)) return "Скасувати";
+            if ("it".equals(code)) return "Annulla";
+            return "Abbrechen";
+        }
+
+        String selectContact() {
+            if ("en".equals(code)) return "Select at least one contact.";
+            if ("fr".equals(code)) return "Sélectionnez au moins un contact.";
+            if ("ru".equals(code)) return "Выберите хотя бы один контакт.";
+            if ("uk".equals(code)) return "Виберіть хоча б один контакт.";
+            if ("it".equals(code)) return "Seleziona almeno un contatto.";
+            return "Wähle mindestens einen Kontakt aus.";
+        }
+
+        String selectAtMostSix() {
+            if ("en".equals(code)) return "Select at most 6 contacts.";
+            if ("fr".equals(code)) return "Sélectionnez au maximum 6 contacts.";
+            if ("ru".equals(code)) return "Выберите не более 6 контактов.";
+            if ("uk".equals(code)) return "Виберіть не більше 6 контактів.";
+            if ("it".equals(code)) return "Seleziona al massimo 6 contatti.";
+            return "Wähle höchstens 6 Kontakte aus.";
+        }
+
+        String selectedContacts() {
+            if ("en".equals(code)) return "Selected contacts:";
+            if ("fr".equals(code)) return "Contacts sélectionnés :";
+            if ("ru".equals(code)) return "Выбранные контакты:";
+            if ("uk".equals(code)) return "Вибрані контакти:";
+            if ("it".equals(code)) return "Contatti selezionati:";
+            return "Ausgewählte Kontakte:";
+        }
+
+        String bulkSent(int count) {
+            if ("en".equals(code)) return "Sent separately to " + count + " contacts.";
+            if ("fr".equals(code)) return "Message envoyé séparément à " + count + " contacts.";
+            if ("ru".equals(code)) return "Сообщение отдельно отправлено контактам: " + count + ".";
+            if ("uk".equals(code)) return "Повідомлення окремо надіслано контактам: " + count + ".";
+            if ("it".equals(code)) return "Messaggio inviato separatamente a " + count + " contatti.";
+            return "Nachricht einzeln an " + count + " Kontakte gesendet.";
+        }
+
+        String contactSettings() {
+            if ("en".equals(code)) return "Contact settings";
+            if ("fr".equals(code)) return "Paramètres du contact";
+            if ("ru".equals(code)) return "Настройки контакта";
+            if ("uk".equals(code)) return "Налаштування контакту";
+            if ("it".equals(code)) return "Impostazioni contatto";
+            return "Kontakt bearbeiten";
+        }
+
+        String contactColor() {
+            if ("en".equals(code)) return "Contact color";
+            if ("fr".equals(code)) return "Couleur du contact";
+            if ("ru".equals(code)) return "Цвет контакта";
+            if ("uk".equals(code)) return "Колір контакту";
+            if ("it".equals(code)) return "Colore contatto";
+            return "Kontaktfarbe";
+        }
+
+        String internalNote() {
+            if ("en".equals(code)) return "Internal note";
+            if ("fr".equals(code)) return "Note interne";
+            if ("ru".equals(code)) return "Внутренняя заметка";
+            if ("uk".equals(code)) return "Внутрішня нотатка";
+            if ("it".equals(code)) return "Nota interna";
+            return "Interne Bemerkung";
+        }
+
+        String visibleOnlyToYou() {
+            if ("en".equals(code)) return "Visible only to you";
+            if ("fr".equals(code)) return "Visible uniquement par vous";
+            if ("ru".equals(code)) return "Видно только вам";
+            if ("uk".equals(code)) return "Видно лише вам";
+            if ("it".equals(code)) return "Visibile solo a te";
+            return "Nur für dich sichtbar";
+        }
+
+        String noInternalNote() {
+            if ("en".equals(code)) return "No internal note";
+            if ("fr".equals(code)) return "Aucune note interne";
+            if ("ru".equals(code)) return "Нет внутренней заметки";
+            if ("uk".equals(code)) return "Немає внутрішньої нотатки";
+            if ("it".equals(code)) return "Nessuna nota interna";
+            return "Keine interne Bemerkung";
+        }
+
+        String longPressContact() {
+            if ("en".equals(code)) return "Long press to edit color and note";
+            if ("fr".equals(code)) return "Appui long pour modifier la couleur et la note";
+            if ("ru".equals(code)) return "Удерживайте, чтобы изменить цвет и заметку";
+            if ("uk".equals(code)) return "Утримуйте, щоб змінити колір і нотатку";
+            if ("it".equals(code)) return "Tieni premuto per modificare colore e nota";
+            return "Lange drücken, um Farbe und Bemerkung zu ändern";
+        }
+
+        String save() {
+            if ("en".equals(code)) return "Save";
+            if ("fr".equals(code)) return "Enregistrer";
+            if ("ru".equals(code)) return "Сохранить";
+            if ("uk".equals(code)) return "Зберегти";
+            if ("it".equals(code)) return "Salva";
+            return "Speichern";
+        }
+
+        String contactSaved() {
+            if ("en".equals(code)) return "Contact saved.";
+            if ("fr".equals(code)) return "Contact enregistré.";
+            if ("ru".equals(code)) return "Контакт сохранён.";
+            if ("uk".equals(code)) return "Контакт збережено.";
+            if ("it".equals(code)) return "Contatto salvato.";
+            return "Kontakt gespeichert.";
         }
 
         String sessionExpired() {
