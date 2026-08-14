@@ -32,6 +32,17 @@ public class MessageMergeTest {
         assertEquals(Arrays.asList(1, 2, 3), ids(target));
     }
 
+    @Test
+    public void mergeRecentSortsDeduplicatesAndKeepsNewestWindow() {
+        List<ChatApi.Message> merged = MessageMerge.mergeRecent(
+                Arrays.asList(message(4), message(2), message(3)),
+                Arrays.asList(message(3), message(5), message(1)),
+                3
+        );
+
+        assertEquals(Arrays.asList(3, 4, 5), ids(merged));
+    }
+
     private ChatApi.Message message(int id) {
         return new ChatApi.Message(id, "sender", "recipient", "text", "text", 0, 0, "now");
     }

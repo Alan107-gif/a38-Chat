@@ -22,7 +22,7 @@ import java.util.List;
 import java.util.UUID;
 
 final class ChatApi {
-    static final String CHAT_URL = "https://chat.contentclassic.com/chat/";
+    static final String CHAT_URL = BuildConfig.CHAT_BASE_URL;
     static final String API_URL = CHAT_URL + "api.php";
     static final String BLOG_URL = CHAT_URL + "blog.html";
     static final String AUTH_URL = CHAT_URL + "auth.php";
@@ -62,13 +62,15 @@ final class ChatApi {
                     item.optString("username", ""),
                     item.optInt("last_id", 0),
                     item.optString("last_at", ""),
-                    item.optInt("message_count", 0)
+                    item.optInt("message_count", 0),
+                    item.optString("color", ""),
+                    item.optString("note", "")
             ));
         }
         return contacts;
     }
 
-    static MessagesResult messages(String token, int since, String peer) throws IOException, JSONException, ApiException {
+    static MessagesResult messages(String token, String username, int since, String peer) throws IOException, JSONException, ApiException {
         StringBuilder url = new StringBuilder(API_URL)
                 .append("?action=messages&since=")
                 .append(Math.max(0, since));
@@ -77,12 +79,13 @@ final class ChatApi {
         }
 
         JSONObject json = getJson(url.toString(), token);
+        MessageAccessPolicy.requireViewer(username, json.optString("viewer", ""));
         JSONArray array = json.optJSONArray("messages");
         ArrayList<Message> messages = new ArrayList<>();
         if (array != null) {
             for (int i = 0; i < array.length(); i++) {
                 JSONObject item = array.getJSONObject(i);
-                messages.add(new Message(
+                Message message = new Message(
                         item.optInt("id", 0),
                         item.optString("sender", ""),
                         item.optString("recipient", ""),
@@ -90,8 +93,13 @@ final class ChatApi {
                         item.optString("message_type", "text"),
                         item.optInt("image_width", 0),
                         item.optInt("image_height", 0),
-                        item.optString("created_at", "")
-                ));
+                        item.optString("created_at", ""),
+                        item.optLong("created_at_epoch", 0L)
+                );
+                MessageAccessPolicy.requireMessage(username, peer, message);
+                if (MessageAccessPolicy.isRenderable(message)) {
+                    messages.add(message);
+                }
             }
         }
 
@@ -140,6 +148,46 @@ final class ChatApi {
         return json.optInt("id", 0);
     }
 
+    static int sendMany(
+            String token,
+            List<String> recipients,
+            String message,
+            byte[] webpImage
+    ) throws IOException, JSONException, ApiException {
+        JSONArray values = new JSONArray();
+        for (String recipient : recipients) {
+            values.put(recipient);
+        }
+        String boundary = "A38Boundary" + UUID.randomUUID().toString().replace("-", "");
+        HttpURLConnection connection = open(API_URL + "?action=send", token);
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "multipart/form-data; boundary=" + boundary);
+
+        try (DataOutputStream out = new DataOutputStream(connection.getOutputStream())) {
+            writePart(out, boundary, "recipients_json", values.toString());
+            writePart(out, boundary, "message", message == null ? "" : message);
+            if (webpImage != null && webpImage.length > 0) {
+                out.writeBytes("--" + boundary + "\r\n");
+                out.writeBytes("Content-Disposition: form-data; name=\"image\"; filename=\"chat-image.webp\"\r\n");
+                out.writeBytes("Content-Type: image/webp\r\n\r\n");
+                out.write(webpImage);
+                out.writeBytes("\r\n");
+            }
+            out.writeBytes("--" + boundary + "--\r\n");
+        }
+
+        JSONObject json = readJson(connection);
+        return json.optInt("sent_count", 0);
+    }
+
+    static void updateContact(String token, String contact, String color, String note) throws IOException, JSONException, ApiException {
+        String body = formField("contact", contact)
+                + "&" + formField("color", color)
+                + "&" + formField("note", note);
+        postForm(API_URL + "?action=contact_update", token, body);
+    }
+
     static Bitmap image(String token, int id) throws IOException, ApiException {
         HttpURLConnection connection = open(API_URL + "?action=image&id=" + Math.max(0, id), token);
         connection.setRequestMethod("GET");
@@ -153,6 +201,64 @@ final class ChatApi {
         } finally {
             connection.disconnect();
         }
+    }
+
+    static Bitmap profileImage(String token, String username) throws IOException, ApiException {
+        HttpURLConnection connection = open(
+                API_URL + "?action=profile_image&username=" + encode(username),
+                token
+        );
+        connection.setRequestMethod("GET");
+        int code = connection.getResponseCode();
+        if (code == 404) {
+            connection.disconnect();
+            return null;
+        }
+        if (code < 200 || code >= 300) {
+            connection.disconnect();
+            throw new ApiException(code, "Profilbild konnte nicht geladen werden.");
+        }
+        String contentType = connection.getContentType();
+        int contentLength = connection.getContentLength();
+        if (contentType == null
+                || !contentType.toLowerCase().startsWith("image/png")
+                || contentLength > 24 * 1024) {
+            connection.disconnect();
+            throw new IOException("Invalid profile image response");
+        }
+
+        Bitmap bitmap;
+        try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
+            byte[] png = readLimited(input, 24 * 1024);
+            bitmap = BitmapFactory.decodeByteArray(png, 0, png.length);
+        } finally {
+            connection.disconnect();
+        }
+        if (bitmap == null || bitmap.getWidth() != 32 || bitmap.getHeight() != 32) {
+            if (bitmap != null) {
+                bitmap.recycle();
+            }
+            throw new IOException("Invalid profile image response");
+        }
+        return bitmap;
+    }
+
+    static void updateProfileImage(String token, byte[] png, boolean overwrite) throws IOException, JSONException, ApiException {
+        if (png == null || png.length == 0 || png.length > 24 * 1024) {
+            throw new IOException("Invalid profile image");
+        }
+        HttpURLConnection connection = open(
+                API_URL + "?action=profile_update&overwrite=" + (overwrite ? "1" : "0"),
+                token
+        );
+        connection.setRequestMethod("POST");
+        connection.setDoOutput(true);
+        connection.setRequestProperty("Content-Type", "image/png");
+        connection.setFixedLengthStreamingMode(png.length);
+        try (OutputStream output = connection.getOutputStream()) {
+            output.write(png);
+        }
+        readJson(connection);
     }
 
     private static void writePart(DataOutputStream out, String boundary, String name, String value) throws IOException {
@@ -199,7 +305,7 @@ final class ChatApi {
         connection.setConnectTimeout(12000);
         connection.setReadTimeout(20000);
         connection.setRequestProperty("Accept", "application/json");
-        connection.setRequestProperty("User-Agent", "a38-Chat/1.1.3");
+        connection.setRequestProperty("User-Agent", "a38-Chat/" + BuildConfig.VERSION_NAME);
         if (token != null && !token.isEmpty()) {
             connection.setRequestProperty("Authorization", "Bearer " + token);
         }
@@ -227,6 +333,19 @@ final class ChatApi {
             }
             return output.toString("UTF-8");
         }
+    }
+
+    private static byte[] readLimited(InputStream input, int maximum) throws IOException {
+        ByteArrayOutputStream output = new ByteArrayOutputStream();
+        byte[] buffer = new byte[4096];
+        int read;
+        while ((read = input.read(buffer)) != -1) {
+            if (output.size() + read > maximum) {
+                throw new IOException("Response is too large");
+            }
+            output.write(buffer, 0, read);
+        }
+        return output.toByteArray();
     }
 
     static final class ApiException extends Exception {
@@ -279,12 +398,16 @@ final class ChatApi {
         final int lastId;
         final String lastAt;
         final int messageCount;
+        final String color;
+        final String note;
 
-        Contact(String username, int lastId, String lastAt, int messageCount) {
+        Contact(String username, int lastId, String lastAt, int messageCount, String color, String note) {
             this.username = username;
             this.lastId = lastId;
             this.lastAt = lastAt;
             this.messageCount = messageCount;
+            this.color = color;
+            this.note = note;
         }
     }
 
@@ -297,8 +420,23 @@ final class ChatApi {
         final int imageWidth;
         final int imageHeight;
         final String createdAt;
+        final long createdAtEpoch;
 
         Message(int id, String sender, String recipient, String text, String type, int imageWidth, int imageHeight, String createdAt) {
+            this(id, sender, recipient, text, type, imageWidth, imageHeight, createdAt, 0L);
+        }
+
+        Message(
+                int id,
+                String sender,
+                String recipient,
+                String text,
+                String type,
+                int imageWidth,
+                int imageHeight,
+                String createdAt,
+                long createdAtEpoch
+        ) {
             this.id = id;
             this.sender = sender;
             this.recipient = recipient;
@@ -307,6 +445,7 @@ final class ChatApi {
             this.imageWidth = imageWidth;
             this.imageHeight = imageHeight;
             this.createdAt = createdAt;
+            this.createdAtEpoch = createdAtEpoch;
         }
 
         boolean isImage() {

@@ -21,11 +21,15 @@ Version 1.x uses a dedicated release certificate. An older test APK signed with 
 
 - Open the app and land directly in your chat, ready to continue where you left off.
 - Stay signed in, add multiple accounts and switch between them from the side menu.
-- Find everyone you have chatted with in a clear contact list.
+- Find everyone you have chatted with in a clear contact list, assign colors and keep private contact notes.
+- Send the same text or image separately to up to six selected contacts without creating a group chat.
 - Open a conversation at its newest message without losing your place while reading older messages.
+- Keep an encrypted per-account message cache and fetch only newer messages during normal refreshes.
 - Receive notifications for new messages without a permanent status notification and choose how long message alerts remain visible.
 - Send text and compressed photos, including correctly oriented portrait images.
 - Tap any photo for a large view, use pinch-to-zoom and reuse its recipient for your next message.
+- Draw a 32 × 32 pixel-art profile image on a large touch canvas and see each sender's image beside their messages.
+- See message times in your local time zone and copy a text message with a long press.
 - Get an in-app warning when your username is used for another app or web sign-in.
 - Review authorised mobile app sessions in the web chat and revoke access even after an app was uninstalled.
 - Choose between Light, Dark and Neon Moni themes.
