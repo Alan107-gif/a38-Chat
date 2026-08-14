@@ -1,6 +1,6 @@
 {
-  "versionCode": 7,
-  "versionName": "1.1.3",
+  "versionCode": 12,
+  "versionName": "1.1.4",
   "title": {
     "de": "Update verfügbar",
     "en": "Update available",
@@ -10,14 +10,14 @@
     "it": "Aggiornamento disponibile"
   },
   "notes": {
-    "de": "Dringender Stabilitätsfix: Der Absturz direkt nach der Anmeldung oder beim Öffnen eines angemeldeten Kontos ist behoben. Außerdem: korrekte Empfängerwahl, Anmeldewarnungen, App-Geräteverwaltung und Bild-Zoom; die dauerhafte Statusbenachrichtigung wurde entfernt.",
-    "en": "Urgent stability fix: The crash immediately after sign-in or when opening a signed-in account has been fixed. Also included: correct recipient selection, sign-in warnings, app device management and image zoom; the permanent status notification was removed.",
-    "fr": "Correctif urgent de stabilité : le plantage juste après la connexion ou à l’ouverture d’un compte connecté est corrigé. Sont également inclus : choix correct du destinataire, alertes de connexion, gestion des appareils et zoom des images ; la notification permanente a été supprimée.",
-    "ru": "Срочное исправление стабильности: устранён сбой сразу после входа или при открытии уже авторизованной учётной записи. Также исправлен выбор получателя, добавлены предупреждения о входе, управление устройствами и масштабирование изображений; постоянное уведомление удалено.",
-    "uk": "Термінове виправлення стабільності: усунено збій одразу після входу або під час відкриття вже авторизованого облікового запису. Також виправлено вибір одержувача, додано попередження про вхід, керування пристроями й масштабування зображень; постійне сповіщення видалено.",
-    "it": "Correzione urgente di stabilità: risolto l’arresto anomalo subito dopo l’accesso o all’apertura di un account già connesso. Inclusi anche la selezione corretta del destinatario, gli avvisi di accesso, la gestione dei dispositivi e lo zoom delle immagini; la notifica permanente è stata rimossa."
+    "de": "Neu: Kontaktfarben und private Kontaktnotizen, getrennte Mehrfachsendungen an bis zu sechs Kontakte einschließlich Bildern, 32×32-Pixelprofilbilder und schnellerer Nachrichtenabruf. Leere Nachrichtszeilen, falsche Profilbildzuordnung, Serverzeitdarstellung und der Neuladevorgang wurden korrigiert. Textnachrichten lassen sich per langem Drücken kopieren.",
+    "en": "New: contact colors and private contact notes, separate multi-send to up to six contacts including images, 32×32 pixel profile images and faster message refreshes. Empty message rows, incorrect profile-image assignment, server-time display and manual reload have been fixed. Long-press a text message to copy it.",
+    "fr": "Nouveau : couleurs et notes privées pour les contacts, envoi séparé à six contacts au maximum avec images, photos de profil pixelisées 32×32 et actualisation plus rapide. Les lignes vides, l’attribution des photos, l’heure du serveur et le rechargement manuel ont été corrigés. Un appui long copie un message texte.",
+    "ru": "Новое: цвета и личные заметки для контактов, отдельная рассылка максимум шести контактам с изображениями, пиксельные аватары 32×32 и более быстрое обновление. Исправлены пустые строки сообщений, привязка аватаров, отображение серверного времени и ручная перезагрузка. Долгое нажатие копирует текст.",
+    "uk": "Нове: кольори й приватні нотатки контактів, окреме надсилання максимум шістьом контактам із зображеннями, піксельні аватари 32×32 і швидше оновлення. Виправлено порожні рядки повідомлень, прив’язку аватарів, показ серверного часу та ручне перезавантаження. Довге натискання копіює текст.",
+    "it": "Novità: colori e note private per i contatti, invio separato fino a sei contatti anche con immagini, profili pixel art 32×32 e aggiornamenti più rapidi. Corrette le righe vuote, l’associazione dei profili, l’ora del server e il ricaricamento manuale. Una pressione prolungata copia il testo."
   },
   "repoUrl": "https://github.com/Alan107-gif/a38-Chat",
   "apkUrl": "https://raw.githubusercontent.com/Alan107-gif/a38-Chat/main/a38-Chat.apk",
-  "sha256": "14da00196a81849f1628d2faadff23e6194bee3601d7ab5badf9a45fac4b6143"
+  "sha256": "a9e3f6530d5afdeb72fba3a88dd9936783f7c6c70266f9769588270b51a70f44"
 }
