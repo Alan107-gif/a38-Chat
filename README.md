@@ -49,7 +49,7 @@ a38-Chat.apk
 a38-Chat.zip
 ```
 
-## Small, private and transparent
+## Small, private
 
 The current APK is about **3.2 MB** and remains below **15 MB** in most cases after installation. That is only a fraction of the space used by many full-featured messengers. a38-Chat is designed to be secure and lightweight by concentrating on the chat itself instead of bundling advertising, analytics or unrelated services.
 
