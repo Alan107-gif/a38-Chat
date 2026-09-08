@@ -14,6 +14,7 @@ import java.security.KeyStore;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Locale;
 
 import javax.crypto.Cipher;
 import javax.crypto.KeyGenerator;
@@ -134,11 +135,14 @@ final class AccountStore {
     }
 
     String getLanguage() {
-        return prefs.getString(KEY_LANGUAGE, "de");
+        return AppLanguage.resolve(prefs.getString(KEY_LANGUAGE, null), Locale.getDefault());
     }
 
     void setLanguage(String language) {
-        prefs.edit().putString(KEY_LANGUAGE, language == null ? "de" : language).apply();
+        prefs.edit().putString(
+                KEY_LANGUAGE,
+                AppLanguage.resolve(language, Locale.getDefault())
+        ).apply();
     }
 
     boolean notificationsEnabled() {

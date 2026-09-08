@@ -19,6 +19,7 @@ import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 final class ChatApi {
@@ -191,13 +192,41 @@ final class ChatApi {
     static Bitmap image(String token, int id) throws IOException, ApiException {
         HttpURLConnection connection = open(API_URL + "?action=image&id=" + Math.max(0, id), token);
         connection.setRequestMethod("GET");
-        int code = connection.getResponseCode();
-        if (code < 200 || code >= 300) {
-            throw new ApiException(code, "Bild konnte nicht geladen werden.");
-        }
+        try {
+            int code = connection.getResponseCode();
+            if (code < 200 || code >= 300) {
+                throw new ApiException(code, "Bild konnte nicht geladen werden.");
+            }
 
-        try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
-            return BitmapFactory.decodeStream(input);
+            if (!ImageResponsePolicy.acceptsHeaders(
+                    connection.getContentType(),
+                    connection.getContentLength()
+            )) {
+                throw new IOException("Invalid message image response");
+            }
+
+            byte[] encoded;
+            try (InputStream input = new BufferedInputStream(connection.getInputStream())) {
+                encoded = readLimited(input, ImageResponsePolicy.MAX_BYTES);
+            }
+
+            BitmapFactory.Options bounds = new BitmapFactory.Options();
+            bounds.inJustDecodeBounds = true;
+            BitmapFactory.decodeByteArray(encoded, 0, encoded.length, bounds);
+            if (!ImageResponsePolicy.acceptsHeaders(bounds.outMimeType, encoded.length)
+                    || !ImageResponsePolicy.acceptsDimensions(bounds.outWidth, bounds.outHeight)) {
+                throw new IOException("Invalid message image response");
+            }
+
+            Bitmap bitmap = BitmapFactory.decodeByteArray(encoded, 0, encoded.length);
+            if (bitmap == null
+                    || !ImageResponsePolicy.acceptsDimensions(bitmap.getWidth(), bitmap.getHeight())) {
+                if (bitmap != null) {
+                    bitmap.recycle();
+                }
+                throw new IOException("Invalid message image response");
+            }
+            return bitmap;
         } finally {
             connection.disconnect();
         }
@@ -221,7 +250,7 @@ final class ChatApi {
         String contentType = connection.getContentType();
         int contentLength = connection.getContentLength();
         if (contentType == null
-                || !contentType.toLowerCase().startsWith("image/png")
+                || !contentType.toLowerCase(Locale.ROOT).startsWith("image/png")
                 || contentLength > 24 * 1024) {
             connection.disconnect();
             throw new IOException("Invalid profile image response");

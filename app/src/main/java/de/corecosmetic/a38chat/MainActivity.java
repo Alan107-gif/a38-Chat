@@ -45,11 +45,13 @@ import androidx.exifinterface.media.ExifInterface;
 
 import java.io.ByteArrayOutputStream;
 import java.io.File;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
@@ -908,14 +910,18 @@ public class MainActivity extends Activity {
     }
 
     private void appendMessageRows(List<ChatApi.Message> messages) {
-        if (messagesBox == null || messages.isEmpty()) {
+        AccountStore.Account renderingAccount = currentAccount;
+        if (messagesBox == null || messages.isEmpty() || renderingAccount == null) {
             return;
         }
         if (emptyView != null && emptyView.getParent() == messagesBox) {
             messagesBox.removeView(emptyView);
         }
         for (ChatApi.Message message : messages) {
-            messagesBox.addView(messageRow(message), matchWrap());
+            if (!accountMatches(renderingAccount)) {
+                return;
+            }
+            messagesBox.addView(messageRow(message, renderingAccount), matchWrap());
         }
     }
 
@@ -923,7 +929,11 @@ public class MainActivity extends Activity {
         if (messagesBox == null) {
             return;
         }
+        AccountStore.Account renderingAccount = currentAccount;
         messagesBox.removeAllViews();
+        if (renderingAccount == null) {
+            return;
+        }
         if (visibleMessages.isEmpty()) {
             emptyView = text(selectedPeer.isEmpty() ? copy.noMessages : copy.noMessagesWith(selectedPeer), 15, palette.muted, Typeface.NORMAL);
             emptyView.setGravity(Gravity.CENTER);
@@ -933,7 +943,10 @@ public class MainActivity extends Activity {
         }
 
         for (ChatApi.Message message : visibleMessages) {
-            messagesBox.addView(messageRow(message), matchWrap());
+            if (!accountMatches(renderingAccount)) {
+                return;
+            }
+            messagesBox.addView(messageRow(message, renderingAccount), matchWrap());
         }
     }
 
@@ -961,9 +974,8 @@ public class MainActivity extends Activity {
         });
     }
 
-    private View messageRow(ChatApi.Message message) {
-        boolean outgoing = currentAccount != null
-                && MessagePresentation.isOutgoing(currentAccount.username, message);
+    private View messageRow(ChatApi.Message message, AccountStore.Account renderingAccount) {
+        boolean outgoing = MessagePresentation.isOutgoing(renderingAccount.username, message);
         String peer = outgoing ? message.recipient : message.sender;
         int assignedColor = assignedContactColor(peer);
         int alignment = outgoing ? Gravity.END : Gravity.START;
@@ -973,6 +985,9 @@ public class MainActivity extends Activity {
         row.setGravity(alignment);
         row.setPadding(0, dp(5), 0, dp(5));
         View.OnClickListener chooseRecipient = view -> {
+            if (!accountMatches(renderingAccount)) {
+                return;
+            }
             selectedPeer = peer;
             if (recipientInput != null) {
                 recipientInput.setText(peer);
@@ -985,7 +1000,7 @@ public class MainActivity extends Activity {
         LinearLayout metaLine = new LinearLayout(this);
         metaLine.setOrientation(LinearLayout.HORIZONTAL);
         metaLine.setGravity(Gravity.CENTER_VERTICAL);
-        ImageView avatar = profileAvatar(MessagePresentation.senderUsername(message), currentAccount);
+        ImageView avatar = profileAvatar(MessagePresentation.senderUsername(message), renderingAccount);
         LinearLayout.LayoutParams avatarParams = new LinearLayout.LayoutParams(dp(40), dp(40));
         avatarParams.rightMargin = dp(7);
         metaLine.addView(avatar, avatarParams);
@@ -997,7 +1012,7 @@ public class MainActivity extends Activity {
             metaLine.addView(colorMarker, markerParams);
         }
         TextView meta = text(
-                MessagePresentation.peerUsername(currentAccount.username, message)
+                MessagePresentation.peerUsername(renderingAccount.username, message)
                         + "  "
                         + MessageTimeFormatter.format(message),
                 11,
@@ -1018,6 +1033,9 @@ public class MainActivity extends Activity {
         row.addView(metaLine, metaParams);
 
         View.OnLongClickListener copyMessage = view -> {
+            if (!accountMatches(renderingAccount)) {
+                return false;
+            }
             if (!MessageClipboard.copy(this, message)) {
                 return false;
             }
@@ -1048,6 +1066,9 @@ public class MainActivity extends Activity {
                 loadImage(message.id, image);
             }
             image.setOnClickListener(view -> {
+                if (!accountMatches(renderingAccount)) {
+                    return;
+                }
                 chooseRecipient.onClick(view);
                 showImageViewer(message, peer);
             });
@@ -1752,7 +1773,7 @@ public class MainActivity extends Activity {
                 "#DC2626", "#9333EA", "#0891B2", "#CA8A04"
         };
         String initialColor = contact.color != null && contact.color.matches("^#[0-9A-Fa-f]{6}$")
-                ? contact.color.toUpperCase()
+                ? contact.color.toUpperCase(Locale.ROOT)
                 : availableColors[0];
         String[] selectedColor = {initialColor};
 
@@ -2467,7 +2488,6 @@ public class MainActivity extends Activity {
                     status.setText(labels.ready);
                     button.setEnabled(true);
                     button.setOnClickListener(view -> requestPackageInstall(apk, labels));
-                    requestPackageInstall(apk, labels);
                 });
             } catch (Exception error) {
                 mainHandler.post(() -> {
@@ -2480,6 +2500,11 @@ public class MainActivity extends Activity {
     }
 
     private void requestPackageInstall(File apk, UpdateText labels) {
+        if (!isExpectedUpdateFile(apk)) {
+            toast(labels.failed);
+            return;
+        }
+        pendingUpdateFile = apk;
         if (!getPackageManager().canRequestPackageInstalls()) {
             toast(labels.allowInstall);
             Intent settings = new Intent(
@@ -2493,7 +2518,14 @@ public class MainActivity extends Activity {
     }
 
     private void launchPackageInstaller(File apk) {
-        Uri uri = Uri.parse("content://" + getPackageName() + ".updates/" + UpdateFileProvider.FILE_NAME);
+        if (!isExpectedUpdateFile(apk)) {
+            toast(UpdateText.from(copy.code).failed);
+            return;
+        }
+
+        Uri uri = Uri.parse(
+                "content://" + getPackageName() + ".updates/" + Uri.encode(apk.getName())
+        );
         Intent install = new Intent(Intent.ACTION_VIEW);
         install.setDataAndType(uri, "application/vnd.android.package-archive");
         install.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
@@ -2501,6 +2533,18 @@ public class MainActivity extends Activity {
             startActivity(install);
         } catch (Exception error) {
             toast(UpdateText.from(copy.code).failed);
+        }
+    }
+
+    private boolean isExpectedUpdateFile(File apk) {
+        if (apk == null || !apk.isFile()) {
+            return false;
+        }
+        File expected = new File(new File(getCacheDir(), "updater"), UpdateFileProvider.FILE_NAME);
+        try {
+            return apk.getCanonicalFile().equals(expected.getCanonicalFile());
+        } catch (IOException ignored) {
+            return false;
         }
     }
 

@@ -1,6 +1,6 @@
 {
-  "versionCode": 12,
-  "versionName": "1.1.4",
+  "versionCode": 13,
+  "versionName": "1.1.5",
   "title": {
     "de": "Update verfügbar",
     "en": "Update available",
@@ -10,14 +10,14 @@
     "it": "Aggiornamento disponibile"
   },
   "notes": {
-    "de": "Neu: Kontaktfarben und private Kontaktnotizen, getrennte Mehrfachsendungen an bis zu sechs Kontakte einschließlich Bildern, 32×32-Pixelprofilbilder und schnellerer Nachrichtenabruf. Leere Nachrichtszeilen, falsche Profilbildzuordnung, Serverzeitdarstellung und der Neuladevorgang wurden korrigiert. Textnachrichten lassen sich per langem Drücken kopieren.",
-    "en": "New: contact colors and private contact notes, separate multi-send to up to six contacts including images, 32×32 pixel profile images and faster message refreshes. Empty message rows, incorrect profile-image assignment, server-time display and manual reload have been fixed. Long-press a text message to copy it.",
-    "fr": "Nouveau : couleurs et notes privées pour les contacts, envoi séparé à six contacts au maximum avec images, photos de profil pixelisées 32×32 et actualisation plus rapide. Les lignes vides, l’attribution des photos, l’heure du serveur et le rechargement manuel ont été corrigés. Un appui long copie un message texte.",
-    "ru": "Новое: цвета и личные заметки для контактов, отдельная рассылка максимум шести контактам с изображениями, пиксельные аватары 32×32 и более быстрое обновление. Исправлены пустые строки сообщений, привязка аватаров, отображение серверного времени и ручная перезагрузка. Долгое нажатие копирует текст.",
-    "uk": "Нове: кольори й приватні нотатки контактів, окреме надсилання максимум шістьом контактам із зображеннями, піксельні аватари 32×32 і швидше оновлення. Виправлено порожні рядки повідомлень, прив’язку аватарів, показ серверного часу та ручне перезавантаження. Довге натискання копіює текст.",
-    "it": "Novità: colori e note private per i contatti, invio separato fino a sei contatti anche con immagini, profili pixel art 32×32 e aggiornamenti più rapidi. Corrette le righe vuote, l’associazione dei profili, l’ora del server e il ricaricamento manuale. Una pressione prolungata copia il testo."
+    "de": "Version 1.1.5 verbessert Stabilität und Sicherheit: Die Startsprache folgt automatisch dem Gerät, empfangene Bilder werden strenger geprüft, App-Updates erfordern eine zweite Bestätigung und verspätete Antworten können nach einem Kontowechsel nicht im falschen Konto erscheinen. Das bekannte App-Symbol bleibt unverändert.",
+    "en": "Version 1.1.5 improves stability and security: the initial language follows the device automatically, received images are validated more strictly, app updates require a second confirmation, and late responses cannot appear under the wrong account after switching accounts. The familiar app icon remains unchanged.",
+    "fr": "La version 1.1.5 améliore la stabilité et la sécurité : la langue initiale suit automatiquement l’appareil, les images reçues sont mieux contrôlées, les mises à jour exigent une seconde confirmation et les réponses tardives ne peuvent pas apparaître dans le mauvais compte. L’icône habituelle reste inchangée.",
+    "ru": "Версия 1.1.5 повышает стабильность и безопасность: начальный язык автоматически следует за языком устройства, полученные изображения проверяются строже, обновление требует второго подтверждения, а запоздалые ответы не появятся в другой учётной записи. Знакомая иконка не изменилась.",
+    "uk": "Версія 1.1.5 покращує стабільність і безпеку: початкова мова автоматично відповідає мові пристрою, отримані зображення перевіряються суворіше, оновлення потребує другого підтвердження, а запізнілі відповіді не з’являться в іншому обліковому записі. Знайома іконка не змінилася.",
+    "it": "La versione 1.1.5 migliora stabilità e sicurezza: la lingua iniziale segue automaticamente il dispositivo, le immagini ricevute vengono controllate più rigorosamente, gli aggiornamenti richiedono una seconda conferma e le risposte in ritardo non possono apparire nell’account sbagliato dopo un cambio. L’icona abituale rimane invariata."
   },
   "repoUrl": "https://github.com/Alan107-gif/a38-Chat",
   "apkUrl": "https://raw.githubusercontent.com/Alan107-gif/a38-Chat/main/a38-Chat.apk",
-  "sha256": "a9e3f6530d5afdeb72fba3a88dd9936783f7c6c70266f9769588270b51a70f44"
+  "sha256": "3b47d3723437eb7b15325573ac55906fce6c2ac26006eaaeb7f479efa667c09f"
 }

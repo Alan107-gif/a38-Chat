@@ -33,7 +33,8 @@ Version 1.x uses a dedicated release certificate. An older test APK signed with 
 - Get an in-app warning when your username is used for another app or web sign-in.
 - Review authorised mobile app sessions in the web chat and revoke access even after an app was uninstalled.
 - Choose between Light, Dark and Neon Moni themes.
-- Use the app in German, English, French, Russian, Ukrainian or Italian.
+- Start in the supported system language automatically, or choose German,
+  English, French, Russian, Ukrainian or Italian manually.
 - Open the chat blog and security information without leaving the app experience.
 - Get an in-app notice when a newer GitHub release is available.
 - Enjoy a focused chat without ads, analytics or tracking SDKs.
