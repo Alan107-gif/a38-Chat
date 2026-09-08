@@ -1,3 +1,5 @@
+import java.util.Locale
+
 plugins {
     id "com.android.application"
 }
@@ -7,6 +9,14 @@ def signingPropertiesFile = file(System.getenv("A38_CHAT_SIGNING_PROPERTIES")
 def signingProperties = new Properties()
 if (signingPropertiesFile.isFile()) {
     signingPropertiesFile.withInputStream { signingProperties.load(it) }
+}
+def signingReady = signingPropertiesFile.isFile()
+        && ["storeFile", "storePassword", "keyAlias", "keyPassword"].every {
+            def value = signingProperties.getProperty(it)
+            value != null && !value.trim().isEmpty()
+        }
+if (signingReady) {
+    signingReady = file(signingProperties.getProperty("storeFile")).isFile()
 }
 
 android {
@@ -22,8 +32,8 @@ android {
         applicationId "de.corecosmetic.a38chat"
         minSdk 26
         targetSdk 35
-        versionCode 12
-        versionName "1.1.4"
+        versionCode 13
+        versionName "1.1.5"
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "CHAT_BASE_URL", "\"https://chat.contentclassic.com/chat/\""
         buildConfigField "boolean", "BETA_CHANNEL", "false"
@@ -31,7 +41,7 @@ android {
 
     signingConfigs {
         release {
-            if (signingPropertiesFile.isFile()) {
+            if (signingReady) {
                 storeFile file(signingProperties.getProperty("storeFile"))
                 storePassword signingProperties.getProperty("storePassword")
                 keyAlias signingProperties.getProperty("keyAlias")
@@ -44,14 +54,14 @@ android {
         release {
             minifyEnabled false
             shrinkResources false
-            if (signingPropertiesFile.isFile()) {
+            if (signingReady) {
                 signingConfig signingConfigs.release
             }
         }
         beta {
             initWith release
             applicationIdSuffix ".beta"
-            versionNameSuffix "-beta.6"
+            versionNameSuffix "-beta.3"
             matchingFallbacks = ["release"]
             resValue "string", "app_name", "a38-Chat Beta"
             buildConfigField "String", "CHAT_BASE_URL", "\"https://chat.contentclassic.com/chat-beta/\""
@@ -62,6 +72,21 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_11
         targetCompatibility JavaVersion.VERSION_11
+    }
+}
+
+gradle.taskGraph.whenReady { graph ->
+    boolean packagesProtectedBuild = graph.allTasks.any { task ->
+        String name = task.name.toLowerCase(Locale.ROOT)
+        boolean protectedType = name.contains("release") || name.contains("beta")
+        boolean packageTask = name.startsWith("assemble")
+                || name.startsWith("bundle")
+                || name.startsWith("package")
+                || name.startsWith("install")
+        protectedType && packageTask
+    }
+    if (packagesProtectedBuild && !signingReady) {
+        throw new GradleException("A38 release signing is required for beta and release packages")
     }
 }
 
